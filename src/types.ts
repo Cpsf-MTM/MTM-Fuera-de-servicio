@@ -3,6 +3,7 @@ export interface EgresoData {
   isla: string;
   fecha: string;
   motivo: string;
+  nota?: string;
   coinin: string;
   coinout: string;
   jackpot: string;
@@ -59,6 +60,7 @@ export interface FlatRecord {
   e_isla: string;
   e_fecha: string;
   e_motivo: string;
+  e_nota?: string;
   e_coinin: string;
   e_coinout: string;
   e_jackpot: string;

@@ -87,6 +87,11 @@ export function generarPDF(r: MaintenanceRecord) {
   kv('Operador', r.egreso.operador, 90, 110, y);
   y += 7;
   
+  if ((r.egreso as any).nota) {
+    kv('Aclaración / Nota', (r.egreso as any).nota, mg, mg + 28, y);
+    y += 7;
+  }
+  
   kv('COIN IN', formatPesos(r.egreso.coinin), mg, mg + 28, y);
   kv('COIN OUT', formatPesos(r.egreso.coinout), 70, 95, y);
   kv('Jackpot', formatPesos(r.egreso.jackpot), 130, 148, y);

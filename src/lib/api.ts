@@ -1,6 +1,6 @@
 import { MaintenanceRecord, FlatRecord, RecordEstado } from '../types';
 
-const API_URL = (import.meta as any).env?.VITE_API_URL || 'https://script.google.com/macros/s/AKfycbz5OMzTSJ-4pTj-cyA3B8NRGXBUvbgV4MiXXjpUifAcmAOl0VVXMRy2c3r9aBByG8tX/exec';
+const API_URL = (import.meta as any).env?.VITE_API_URL || 'https://script.google.com/macros/s/AKfycbyPCLAuMIv0dnvbj78NdSQRx_iNYhFTCMhiElN-6pc0YQbyw6gE-nNexv6V_f8MYevD/exec';
 const LOCAL_STORAGE_KEY = 'mantenimiento_records_cache';
 
 // Conversión de formato plano (Google Sheets) a jerárquico (React App)
@@ -32,6 +32,7 @@ export function parseFlatRecord(r: FlatRecord): MaintenanceRecord {
       isla: String(r.e_isla || ''),
       fecha: r.e_fecha || '',
       motivo: r.e_motivo || '',
+      nota: r.e_nota || '',
       coinin: r.e_coinin || '',
       coinout: r.e_coinout || '',
       jackpot: r.e_jackpot || '',
@@ -43,7 +44,7 @@ export function parseFlatRecord(r: FlatRecord): MaintenanceRecord {
       operador: r.e_operador || '',
       firma: r.e_firma || '',
       foto: r.e_foto || '',
-    },
+    } as any, // Cast as any if there's type discrepancy during edit transition
     tecnico: r.t_fecha ? {
       fecha: r.t_fecha,
       informe: r.t_informe || '',
@@ -79,6 +80,7 @@ export function flattenRecord(r: MaintenanceRecord): FlatRecord {
     e_isla: r.egreso.isla,
     e_fecha: r.egreso.fecha,
     e_motivo: r.egreso.motivo,
+    e_nota: r.egreso.nota || '',
     e_coinin: r.egreso.coinin,
     e_coinout: r.egreso.coinout,
     e_jackpot: r.egreso.jackpot,

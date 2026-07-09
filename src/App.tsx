@@ -92,6 +92,7 @@ export default function App() {
   const [eFoto, setEFoto] = useState('');
   const [eOperador, setEOperador] = useState('');
   const [eFirma, setEFirma] = useState('');
+  const [eNota, setENota] = useState('');
 
   // Etapa 2: Técnico Form State
   const [tInforme, setTInforme] = useState('');
@@ -169,6 +170,7 @@ export default function App() {
       setEIsla(record.egreso.isla);
       setEFecha(record.egreso.fecha);
       setEMotivo(record.egreso.motivo);
+      setENota(record.egreso.nota || '');
       setECoinIn(record.egreso.coinin);
       setECoinOut(record.egreso.coinout);
       setEJackpot(record.egreso.jackpot);
@@ -188,6 +190,7 @@ export default function App() {
       setEIsla('');
       setEFecha(getNowDateTimeString());
       setEMotivo('');
+      setENota('');
       setECoinIn('');
       setECoinOut('');
       setEJackpot('');
@@ -260,6 +263,7 @@ export default function App() {
         isla: eIsla,
         fecha: eFecha,
         motivo: eMotivo,
+        nota: eNota,
         coinin: eCoinIn,
         coinout: eCoinOut,
         jackpot: eJackpot,
@@ -514,6 +518,9 @@ export default function App() {
       const fechaStr = r.egreso.fecha ? formatFecha(r.egreso.fecha) : '-';
       text += `${idx + 1}. *MÁQUINA ${r.egreso.maquina}* · Isla ${r.egreso.isla}\n`;
       text += `   • *Motivo:* ${r.egreso.motivo || 'Falla'}\n`;
+      if (r.egreso.nota) {
+        text += `   • *Nota:* ${r.egreso.nota}\n`;
+      }
       text += `   • *Fecha Egreso:* ${fechaStr}\n`;
       text += `   • *Estado:* ${estadoStr}\n`;
       if (r.tecnico) {
@@ -832,6 +839,11 @@ export default function App() {
                           
                           <p className="text-xs text-[#9090a8] mt-1">
                             Motivo: <span className="text-[#e8e8f0] font-medium">{r.egreso.motivo}</span>
+                            {r.egreso.nota && (
+                              <span className="block text-[#a0a0b8] italic text-[11px] mt-1 bg-black/20 px-2 py-1 rounded border border-white/5 max-w-md">
+                                Nota: {r.egreso.nota}
+                              </span>
+                            )}
                           </p>
                           
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-[#9090a8]">
@@ -967,21 +979,36 @@ export default function App() {
                   <h3 className="text-xs font-bold text-[#c8a84b] uppercase tracking-wider mb-3">
                     Motivo de Salida del Servicio
                   </h3>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                      Seleccionar causa principal *
-                    </label>
-                    <select
-                      required
-                      value={eMotivo}
-                      onChange={e => setEMotivo(e.target.value)}
-                      className="bg-[#171726] border border-white/10 rounded-lg px-3 py-2.5 text-xs focus:border-[#c8a84b] focus:outline-none text-[#e8e8f0]"
-                    >
-                      <option value="">— Seleccionar causa —</option>
-                      {MOTIVOS.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
+                        Seleccionar causa principal *
+                      </label>
+                      <select
+                        required
+                        value={eMotivo}
+                        onChange={e => setEMotivo(e.target.value)}
+                        className="bg-[#171726] border border-white/10 rounded-lg px-3 py-2.5 text-xs focus:border-[#c8a84b] focus:outline-none text-[#e8e8f0]"
+                      >
+                        <option value="">— Seleccionar causa —</option>
+                        {MOTIVOS.map(m => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
+                        Aclaración / Nota (Opcional)
+                      </label>
+                      <textarea
+                        placeholder="Detalles adicionales sobre el motivo de salida o estado general..."
+                        rows={1}
+                        value={eNota}
+                        onChange={e => setENota(e.target.value)}
+                        className="bg-[#171726] border border-white/10 rounded-lg px-3 py-2.5 text-xs focus:border-[#c8a84b] focus:outline-none text-[#e8e8f0] resize-none h-[40px]"
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -1932,7 +1959,7 @@ export default function App() {
                               Máquina {r.egreso.maquina} <span className="text-[#9090a8] font-normal">·</span> Isla {r.egreso.isla}
                             </span>
                             <span className="text-[10px] text-[#9090a8] block mt-0.5">
-                              Motivo: {r.egreso.motivo || 'Falla'} · {r.egreso.fecha ? formatFecha(r.egreso.fecha) : '-'}
+                              Motivo: {r.egreso.motivo || 'Falla'} {r.egreso.nota ? `(${r.egreso.nota})` : ''} · {r.egreso.fecha ? formatFecha(r.egreso.fecha) : '-'}
                             </span>
                           </div>
                           <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
