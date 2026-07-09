@@ -1,0 +1,6 @@
+{
+  "name": "Mantenimiento Casino Santa Fe",
+  "description": "Sistema de gestión y control de mantenimiento correctivo de máquinas para el Casino Santa Fe",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
