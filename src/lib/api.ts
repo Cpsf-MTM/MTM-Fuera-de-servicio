@@ -119,9 +119,10 @@ export function saveToLocalCache(records: MaintenanceRecord[]) {
   try {
     // 1. Deduplicar registros por ID para prevenir errores de claves duplicadas en React
     const uniqueMap = new Map<string, MaintenanceRecord>();
-    records.forEach(r => {
-      if (r && r.id) {
-        uniqueMap.set(r.id, r);
+    records.forEach((r, idx) => {
+      if (r) {
+        const recordId = r.id || `REG-TEMP-${Date.now()}-${idx}`;
+        uniqueMap.set(recordId, { ...r, id: recordId });
       }
     });
     const uniqueRecords = Array.from(uniqueMap.values());
@@ -199,9 +200,10 @@ export function getLocalCache(): MaintenanceRecord[] {
       const parsed: MaintenanceRecord[] = JSON.parse(data);
       if (Array.isArray(parsed)) {
         const uniqueMap = new Map<string, MaintenanceRecord>();
-        parsed.forEach(r => {
-          if (r && r.id) {
-            uniqueMap.set(r.id, r);
+        parsed.forEach((r, idx) => {
+          if (r) {
+            const recordId = r.id || `REG-TEMP-${Date.now()}-${idx}`;
+            uniqueMap.set(recordId, { ...r, id: recordId });
           }
         });
         return Array.from(uniqueMap.values());

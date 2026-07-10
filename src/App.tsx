@@ -60,7 +60,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'lista' | 'egreso' | 'tecnico' | 'inspector' | 'estadisticas'>('lista');
   const [connectionStatus, setConnectionStatus] = useState<{ source: 'api' | 'local'; error?: string }>({ source: 'api' });
-  const [alerts, setAlerts] = useState<{ id: string; message: string; type: 'success' | 'info' | 'danger' }>([]);
+  const [alerts, setAlerts] = useState<{ id: string; message: string; type: 'success' | 'info' | 'danger' }[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [startDate, setStartDate] = useState<string>('');
@@ -125,7 +125,7 @@ export default function App() {
   }, []);
 
   const addAlert = (message: string, type: 'success' | 'info' | 'danger' = 'success') => {
-    const id = Date.now().toString();
+    const id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     setAlerts(prev => [...prev, { id, message, type }]);
     setTimeout(() => {
       setAlerts(prev => prev.filter(a => a.id !== id));
@@ -138,9 +138,10 @@ export default function App() {
     
     // Deduplicar registros para evitar errores de claves duplicadas (React Key)
     const uniqueMap = new Map<string, MaintenanceRecord>();
-    res.records.forEach(r => {
-      if (r && r.id) {
-        uniqueMap.set(r.id, r);
+    res.records.forEach((r, idx) => {
+      if (r) {
+        const recordId = r.id || `REG-TEMP-${Date.now()}-${idx}`;
+        uniqueMap.set(recordId, { ...r, id: recordId });
       }
     });
     const uniqueRecords = Array.from(uniqueMap.values());
