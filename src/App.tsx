@@ -27,13 +27,24 @@ import {
   Sliders,
   TrendingUp,
   FileCheck2,
-  Trash2
+  Trash2,
+  Cpu,
+  Layers
 } from 'lucide-react';
 
 import { MaintenanceRecord, RecordEstado } from './types';
 import { loadRecords, saveRecord, flattenRecord } from './lib/api';
 import { generarPDF, formatFecha, formatPesos, generarPDFResumenFueraDeServicio } from './lib/pdf';
 import SignatureCanvas from './components/SignatureCanvas';
+import ParqueStats from './components/ParqueStats';
+import OutofServiceModal from './components/OutofServiceModal';
+import ParqueManager from './components/ParqueManager';
+import { 
+  getMachineDetails, 
+  calculateOutOfServiceDuration, 
+  getTotalActiveMachines,
+  TOTAL_CASINO_MACHINES 
+} from './lib/machineCatalog';
 
 // Constantes
 const MOTIVOS = [
@@ -58,7 +69,7 @@ export default function App() {
   // Estado global de datos
   const [records, setRecords] = useState<MaintenanceRecord[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'lista' | 'egreso' | 'tecnico' | 'inspector' | 'estadisticas'>('lista');
+  const [activeTab, setActiveTab] = useState<'lista' | 'egreso' | 'tecnico' | 'inspector' | 'estadisticas' | 'parque'>('lista');
   const [connectionStatus, setConnectionStatus] = useState<{ source: 'api' | 'local'; error?: string }>({ source: 'api' });
   const [alerts, setAlerts] = useState<{ id: string; message: string; type: 'success' | 'info' | 'danger' }[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -505,33 +516,57 @@ export default function App() {
   };
 
   const getOutofServicePlainText = () => {
+    const totalParque = getTotalActiveMachines() || 815;
     const oos = records.filter(r => r.estado !== 'completo');
-    if (oos.length === 0) return 'No hay máquinas fuera de servicio actualmente. ¡Sala 100% operativa!';
+    const totalInactivas = oos.length;
+    const totalEnServicio = Math.max(0, totalParque - totalInactivas);
+    const operatividadPct = totalParque > 0 ? ((totalEnServicio / totalParque) * 100).toFixed(1) : '100';
+
+    const enEgreso = oos.filter(r => r.estado === 'egreso').length;
+    const enTecnico = oos.filter(r => r.estado === 'tecnico').length;
+
+    if (oos.length === 0) {
+      return `✅ *PARQUE DE MÁQUINAS 100% OPERATIVO*\n*Casino Santa Fe — Sala de Juego*\nTotal: ${totalParque} máquinas habilitadas en servicio.`;
+    }
     
-    let text = `🚨 *RESUMEN DE MÁQUINAS FUERA DE SERVICIO* 🚨\n`;
+    let text = `🚨 *REPORTE OFICIAL DE ESTADO DEL PARQUE Y MÁQUINAS FUERA DE SERVICIO* 🚨\n`;
     text += `*Casino Santa Fe — Sala de Juego*\n`;
     text += `_Generado: ${new Date().toLocaleString('es-AR')}_\n`;
     text += `====================================\n`;
-    text += `Total inhabilitadas: *${oos.length} máquinas*\n\n`;
+    text += `📊 *DISPONIBILIDAD GENERAL:*\n`;
+    text += `• Total Parque Habilitado: *${totalParque} máquinas*\n`;
+    text += `• En Servicio (Operativas): *${totalEnServicio} máquinas* (${operatividadPct}%)\n`;
+    text += `• Fuera de Servicio: *${totalInactivas} máquinas*\n`;
+    text += `  └ Etapa 1 (Taller / Espera técnica): ${enEgreso}\n`;
+    text += `  └ Etapa 2 (Reparada / En control): ${enTecnico}\n`;
+    text += `====================================\n\n`;
+    text += `📋 *DETALLE DE MÁQUINAS INHABILITADAS:*\n\n`;
     
     oos.forEach((r, idx) => {
-      const estadoStr = r.estado === 'egreso' ? 'Fuera de Servicio (Paso 1)' : 'Reparada — Pendiente Control (Paso 2)';
+      const details = getMachineDetails(r.egreso.maquina);
+      const duration = calculateOutOfServiceDuration(r.egreso.fecha);
+      const estadoStr = r.estado === 'egreso' 
+        ? '🔴 Fuera de Servicio (Paso 1)' 
+        : '🔧 Reparada — Pendiente Control (Paso 2)';
       const fechaStr = r.egreso.fecha ? formatFecha(r.egreso.fecha) : '-';
-      text += `${idx + 1}. *MÁQUINA ${r.egreso.maquina}* · Isla ${r.egreso.isla}\n`;
-      text += `   • *Motivo:* ${r.egreso.motivo || 'Falla'}\n`;
-      if (r.egreso.nota) {
-        text += `   • *Nota:* ${r.egreso.nota}\n`;
-      }
-      text += `   • *Fecha Egreso:* ${fechaStr}\n`;
-      text += `   • *Estado:* ${estadoStr}\n`;
-      if (r.tecnico) {
-        text += `   • *Técnico:* ${r.tecnico.tecnico || '-'}\n`;
+      const fabStr = details?.fabricante || 'Fabricante No Especificado';
+      const modStr = details?.modelo ? `${details.modelo} (${details.gabinete || 'STD'})` : '-';
+
+      text += `${idx + 1}. *MÁQUINA ${r.egreso.maquina}* · Isla ${r.egreso.isla || details?.isla || '-'}\n`;
+      text += `   🏢 *Fabricante:* ${fabStr}\n`;
+      text += `   🎰 *Modelo:* ${modStr}\n`;
+      text += `   ⏳ *Tiempo Fuera de Servicio:* ${duration.label}\n`;
+      text += `   ⚠️ *Motivo:* ${r.egreso.motivo || 'Falla'}${r.egreso.nota ? ` (${r.egreso.nota})` : ''}\n`;
+      text += `   📅 *Fecha Egreso:* ${fechaStr}\n`;
+      text += `   📌 *Estado:* ${estadoStr}\n`;
+      if (r.tecnico?.tecnico) {
+        text += `   🛠️ *Técnico:* ${r.tecnico.tecnico}\n`;
       }
       text += `\n`;
     });
     
     text += `====================================\n`;
-    text += `Mantenimiento Oficial Casino Santa Fe`;
+    text += `Departamento de Mantenimiento · Casino Santa Fe`;
     return text;
   };
 
@@ -623,7 +658,7 @@ export default function App() {
 
       <main className="max-w-5xl mx-auto px-4 md:px-6 mt-6">
         {/* Pipeline Stepper */}
-        <div className="grid grid-cols-5 gap-1 md:gap-2 bg-[#12121f] p-1.5 rounded-xl border border-[#c8a84b]/15 mb-6 shadow-xl">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 md:gap-2 bg-[#12121f] p-1.5 rounded-xl border border-[#c8a84b]/15 mb-6 shadow-xl">
           <button
             onClick={() => setActiveTab('lista')}
             className={`flex flex-col items-center py-2 px-1 rounded-lg transition-all relative ${
@@ -693,6 +728,16 @@ export default function App() {
           >
             <TrendingUp className="w-4 md:w-5 h-4 md:h-5 mb-1" />
             <span className="text-[9px] md:text-xs font-semibold">Stats</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('parque')}
+            className={`flex flex-col items-center py-2 px-1 rounded-lg transition-all relative ${
+              activeTab === 'parque' ? 'bg-[#c8a84b]/15 text-[#f0d882]' : 'text-[#9090a8] hover:text-[#e8e8f0] hover:bg-white/5'
+            }`}
+          >
+            <Cpu className="w-4 md:w-5 h-4 md:h-5 mb-1" />
+            <span className="text-[9px] md:text-xs font-semibold">Parque</span>
           </button>
         </div>
 
@@ -827,6 +872,15 @@ export default function App() {
                             <h3 className="text-sm font-bold text-white tracking-wide">
                               Máquina {r.egreso.maquina} <span className="text-[#9090a8] font-normal">·</span> Isla {r.egreso.isla}
                             </h3>
+                            {(() => {
+                              const details = getMachineDetails(r.egreso.maquina);
+                              if (!details) return null;
+                              return (
+                                <span className="text-[10px] font-bold text-[#f0d882] bg-[#c8a84b]/15 px-2 py-0.5 rounded border border-[#c8a84b]/20">
+                                  {details.fabricante} · {details.modelo}
+                                </span>
+                              );
+                            })()}
                             <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
                               r.estado === 'egreso' 
                                 ? 'bg-rose-950/40 border-rose-500/30 text-rose-300' 
@@ -852,6 +906,19 @@ export default function App() {
                               <Calendar className="w-3 h-3 text-[#c8a84b]" />
                               Egreso: {formatFecha(r.egreso.fecha)}
                             </span>
+                            {r.estado !== 'completo' && (() => {
+                              const duration = calculateOutOfServiceDuration(r.egreso.fecha);
+                              const badgeColor = duration.badgeType === 'critical'
+                                ? 'text-rose-400 font-bold'
+                                : duration.badgeType === 'moderate'
+                                ? 'text-amber-400 font-bold'
+                                : 'text-sky-400 font-semibold';
+                              return (
+                                <span className={`flex items-center gap-1 ${badgeColor}`}>
+                                  ⏳ {duration.label} fuera de serv.
+                                </span>
+                              );
+                            })()}
                             <span className="flex items-center gap-1">
                               <User className="w-3 h-3 text-[#c8a84b]" />
                               Op: {r.egreso.operador}
@@ -941,7 +1008,14 @@ export default function App() {
                         required
                         placeholder="Ej: 0042"
                         value={eMaquina}
-                        onChange={e => setEMaquina(e.target.value)}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setEMaquina(val);
+                          const cat = getMachineDetails(val);
+                          if (cat && (!eIsla || eIsla.trim() === '')) {
+                            setEIsla(cat.isla);
+                          }
+                        }}
                         className="bg-[#171726] border border-white/10 rounded-lg px-3 py-2 text-xs focus:border-[#c8a84b] focus:outline-none text-[#e8e8f0]"
                       />
                     </div>
@@ -973,6 +1047,35 @@ export default function App() {
                       />
                     </div>
                   </div>
+
+                  {/* Banner de Reconocimiento de Catálogo */}
+                  {eMaquina.trim() && (() => {
+                    const cat = getMachineDetails(eMaquina);
+                    if (!cat) return null;
+                    return (
+                      <div className="mt-3 bg-[#19192e] border border-[#c8a84b]/30 rounded-xl p-3 flex items-center justify-between text-xs animate-fadeIn">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-lg bg-[#c8a84b]/15 text-[#c8a84b] flex items-center justify-center font-bold text-xs">
+                            🎰
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-[#c8a84b] font-bold uppercase tracking-wider block">
+                              Máquina Identificada en Parque ({cat.fabricante})
+                            </span>
+                            <span className="text-white font-bold text-xs">
+                              {cat.modelo} <span className="text-[#9090a8] font-normal font-mono">({cat.gabinete || 'Standard'})</span>
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[9px] text-[#9090a8] uppercase font-bold block">Ubicación</span>
+                          <span className="text-xs font-mono font-bold text-[#f0d882] bg-[#c8a84b]/10 px-2 py-0.5 rounded border border-[#c8a84b]/20">
+                            Isla {cat.isla}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* 2. Motivo */}
@@ -1731,145 +1834,32 @@ export default function App() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="space-y-6"
             >
-              {/* Tarjetas de Métricas Core */}
-              <div className="grid grid-cols-3 gap-4">
-                <div className="bg-[#12121e] border border-white/5 rounded-xl p-4 text-center shadow-md">
-                  <span className="text-[10px] text-[#9090a8] font-bold uppercase tracking-wider block">
-                    Total Egresos
-                  </span>
-                  <span className="text-2xl md:text-3xl font-extrabold text-[#c8a84b] mt-1 block">
-                    {statsTotal}
-                  </span>
-                </div>
-                
-                <div className="bg-[#12121e] border border-white/5 rounded-xl p-4 text-center shadow-md">
-                  <span className="text-[10px] text-[#9090a8] font-bold uppercase tracking-wider block">
-                    Pendientes
-                  </span>
-                  <span className="text-2xl md:text-3xl font-extrabold text-rose-400 mt-1 block">
-                    {statsPendientes}
-                  </span>
-                </div>
+              <ParqueStats 
+                records={records} 
+                onOpenRecord={r => resetEgresoForm(r)}
+                onNavigateToParque={() => setActiveTab('parque')}
+                onCopyWhatsappText={() => {
+                  navigator.clipboard.writeText(getOutofServicePlainText());
+                  addAlert('✓ Reporte detallado copiado al portapapeles para WhatsApp', 'success');
+                }}
+                addAlert={addAlert}
+              />
+            </motion.div>
+          )}
 
-                <div className="bg-[#12121e] border border-white/5 rounded-xl p-4 text-center shadow-md">
-                  <span className="text-[10px] text-[#9090a8] font-bold uppercase tracking-wider block">
-                    Reingresados
-                  </span>
-                  <span className="text-2xl md:text-3xl font-extrabold text-emerald-400 mt-1 block">
-                    {statsCompleto}
-                  </span>
-                </div>
-              </div>
-
-              {/* Bento Grid de Estadísticas */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* 1. Máquinas con más fallas */}
-                <div className="bg-[#12121e] border border-white/5 rounded-xl p-5 shadow-lg">
-                  <h3 className="text-xs font-bold text-[#c8a84b] uppercase tracking-wider mb-4">
-                    Top 5 Máquinas con más egresos
-                  </h3>
-                  
-                  {sortedMachines.length === 0 ? (
-                    <p className="text-xs text-[#9090a8] text-center py-8">Sin datos suficientes.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {sortedMachines.map(([nombre, cant], idx) => {
-                        const pct = Math.round((cant / maxMachineFaults) * 100);
-                        const colors = ['bg-rose-500', 'bg-amber-500', 'bg-yellow-500', 'bg-sky-500', 'bg-emerald-500'];
-                        const colorClass = colors[Math.min(idx, colors.length - 1)];
-                        const medal = idx === 0 ? '🥇 ' : idx === 1 ? '🥈 ' : idx === 2 ? '🥉 ' : '';
-                        
-                        return (
-                          <div key={nombre} className="space-y-1.5">
-                            <div className="flex justify-between items-center text-xs">
-                              <span className="font-bold text-white">
-                                {medal}{nombre}
-                              </span>
-                              <span className="text-rose-400 font-semibold">{cant} egresos</span>
-                            </div>
-                            <div className="w-full bg-[#1b1b2f] h-2 rounded-full overflow-hidden">
-                              <div 
-                                className={`${colorClass} h-full rounded-full transition-all duration-500`}
-                                style={{ width: `${pct}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* 2. Motivos de egreso */}
-                <div className="bg-[#12121e] border border-white/5 rounded-xl p-5 shadow-lg">
-                  <h3 className="text-xs font-bold text-[#c8a84b] uppercase tracking-wider mb-4">
-                    Egresos clasificados por Motivo
-                  </h3>
-
-                  {sortedMotives.length === 0 ? (
-                    <p className="text-xs text-[#9090a8] text-center py-8">Sin datos suficientes.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {sortedMotives.map(([motivo, cant]) => {
-                        const pct = Math.round((cant / maxMotiveCount) * 100);
-                        return (
-                          <div key={motivo} className="space-y-1.5">
-                            <div className="flex justify-between items-center text-xs">
-                              <span className="text-[#9090a8] font-medium">{motivo}</span>
-                              <span className="text-sky-400 font-bold">{cant}</span>
-                            </div>
-                            <div className="w-full bg-[#1b1b2f] h-2 rounded-full overflow-hidden">
-                              <div 
-                                className="bg-sky-500 h-full rounded-full transition-all duration-500"
-                                style={{ width: `${pct}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* 3. Tiempos de resolución */}
-              <div className="bg-[#12121e] border border-white/5 rounded-xl p-5 shadow-lg">
-                <h3 className="text-xs font-bold text-[#c8a84b] uppercase tracking-wider mb-4 flex items-center gap-1.5">
-                  <Clock className="w-4 h-4 text-[#c8a84b]" />
-                  Eficiencia y Tiempos de Resolución Técnica
-                </h3>
-
-                {repairTimesInHours.length === 0 ? (
-                  <p className="text-xs text-[#9090a8] text-center py-8">
-                    Cargue reparaciones técnicas para calcular tiempos promedio de respuesta correctiva.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center divide-y sm:divide-y-0 sm:divide-x divide-white/5">
-                    <div className="py-2">
-                      <span className="text-[10px] text-[#9090a8] uppercase tracking-wider block">Tiempo Promedio</span>
-                      <span className="text-xl font-bold text-amber-400 mt-1 block">
-                        {formatHours(avgRepairTime)}
-                      </span>
-                    </div>
-
-                    <div className="py-2">
-                      <span className="text-[10px] text-[#9090a8] uppercase tracking-wider block">Respuesta Más Rápida</span>
-                      <span className="text-xl font-bold text-emerald-400 mt-1 block">
-                        {formatHours(minRepairTime)}
-                      </span>
-                    </div>
-
-                    <div className="py-2">
-                      <span className="text-[10px] text-[#9090a8] uppercase tracking-wider block">Respuesta Más Lenta</span>
-                      <span className="text-xl font-bold text-rose-400 mt-1 block">
-                        {formatHours(maxRepairTime)}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
+          {/* TAB: GESTIÓN DE PARQUE Y FABRICANTES */}
+          {activeTab === 'parque' && (
+            <motion.div
+              key="tab-parque"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <ParqueManager 
+                records={records} 
+                addAlert={addAlert} 
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -1878,136 +1868,11 @@ export default function App() {
       {/* Modal: Resumen de Máquinas Fuera de Servicio */}
       <AnimatePresence>
         {showOutofServiceSummary && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
-          >
-            <motion.div
-              initial={{ scale: 0.95, y: 15 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.95, y: 15 }}
-              className="bg-[#121220] border border-[#c8a84b]/20 w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh]"
-            >
-              {/* Header */}
-              <div className="bg-gradient-to-r from-rose-950/60 to-[#121220] p-5 border-b border-white/5 flex justify-between items-center">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
-                    <AlertCircle className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                      Resumen Máquinas Fuera de Servicio
-                    </h3>
-                    <p className="text-[10px] text-[#9090a8] font-medium">
-                      Estado actual de la sala · {records.filter(r => r.estado !== 'completo').length} inactivas
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setShowOutofServiceSummary(false)}
-                  className="p-1.5 rounded-lg bg-white/5 text-[#9090a8] hover:text-white hover:bg-white/10 transition-all"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Body */}
-              <div className="p-6 overflow-y-auto space-y-4 flex-1">
-                {/* Stats cards */}
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="bg-[#17172a] border border-white/5 p-3 rounded-xl text-center">
-                    <span className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wider block">Total Inactivas</span>
-                    <span className="text-xl font-extrabold text-rose-400 mt-0.5 block">
-                      {records.filter(r => r.estado !== 'completo').length}
-                    </span>
-                  </div>
-                  <div className="bg-[#17172a] border border-white/5 p-3 rounded-xl text-center">
-                    <span className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wider block">FDS (Etapa 1)</span>
-                    <span className="text-xl font-extrabold text-rose-500 mt-0.5 block">
-                      {records.filter(r => r.estado === 'egreso').length}
-                    </span>
-                  </div>
-                  <div className="bg-[#17172a] border border-white/5 p-3 rounded-xl text-center">
-                    <span className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wider block">Reparadas (Etapa 2)</span>
-                    <span className="text-xl font-extrabold text-amber-500 mt-0.5 block">
-                      {records.filter(r => r.estado === 'tecnico').length}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Plain Text Preview */}
-                <div className="bg-[#090911] border border-white/5 rounded-xl p-4 font-mono text-[11px] text-[#a0a0b8] max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed select-all">
-                  {getOutofServicePlainText()}
-                </div>
-
-                {/* Table of detail */}
-                <div className="space-y-2">
-                  <h4 className="text-[10px] font-bold text-[#c8a84b] uppercase tracking-wider select-none">
-                    Detalle de máquinas inhabilitadas:
-                  </h4>
-                  {records.filter(r => r.estado !== 'completo').length === 0 ? (
-                    <div className="bg-[#17172a] p-6 text-center rounded-xl border border-dashed border-white/5">
-                      <p className="text-xs text-[#9090a8]">¡No hay máquinas fuera de servicio en este momento!</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {records.filter(r => r.estado !== 'completo').map(r => (
-                        <div key={r.id} className="bg-[#17172a] border border-white/5 p-3 rounded-xl flex justify-between items-center gap-3">
-                          <div>
-                            <span className="text-xs font-bold text-white block">
-                              Máquina {r.egreso.maquina} <span className="text-[#9090a8] font-normal">·</span> Isla {r.egreso.isla}
-                            </span>
-                            <span className="text-[10px] text-[#9090a8] block mt-0.5">
-                              Motivo: {r.egreso.motivo || 'Falla'} {r.egreso.nota ? `(${r.egreso.nota})` : ''} · {r.egreso.fecha ? formatFecha(r.egreso.fecha) : '-'}
-                            </span>
-                          </div>
-                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
-                            r.estado === 'egreso' 
-                              ? 'bg-rose-950/40 border-rose-500/30 text-rose-300' 
-                              : 'bg-amber-950/40 border-amber-500/30 text-amber-300'
-                          }`}>
-                            {r.estado === 'egreso' ? 'F. de Serv (Etapa 1)' : 'Reparada (Etapa 2)'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Footer Actions */}
-              <div className="p-4 bg-[#171728] border-t border-white/5 flex flex-col sm:flex-row justify-end items-stretch sm:items-center gap-2">
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(getOutofServicePlainText());
-                    addAlert('✓ Resumen copiado al portapapeles para WhatsApp', 'success');
-                  }}
-                  className="bg-[#c8a84b] hover:bg-[#f0d882] text-black font-semibold text-xs py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-all shadow-md active:scale-95"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  Copiar para WhatsApp
-                </button>
-                <button
-                  onClick={() => {
-                    generarPDFResumenFueraDeServicio(records);
-                    addAlert('✓ Reporte en PDF descargado', 'success');
-                  }}
-                  className="bg-white/5 hover:bg-white/10 text-white border border-white/10 font-semibold text-xs py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-all active:scale-95"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  Descargar Reporte PDF
-                </button>
-                <button
-                  onClick={() => setShowOutofServiceSummary(false)}
-                  className="bg-transparent hover:bg-white/5 text-[#9090a8] hover:text-white font-semibold text-xs py-2 px-4 rounded-lg transition-all"
-                >
-                  Cerrar
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
+          <OutofServiceModal 
+            records={records}
+            onClose={() => setShowOutofServiceSummary(false)}
+            addAlert={addAlert}
+          />
         )}
       </AnimatePresence>
     </div>

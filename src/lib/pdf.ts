@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { MaintenanceRecord } from '../types';
+import { getMachineDetails, calculateOutOfServiceDuration, TOTAL_CASINO_MACHINES } from './machineCatalog';
 
 export function formatFecha(f: string): string {
   if (!f) return '-';
@@ -283,8 +284,8 @@ export function generarPDF(r: MaintenanceRecord) {
 export function generarPDFResumenFueraDeServicio(records: MaintenanceRecord[]) {
   const oosRecords = records.filter(r => r.estado !== 'completo');
   
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const W = 210;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  const W = 297;
   const mg = 14;
   let y = 20;
 
@@ -300,89 +301,109 @@ export function generarPDFResumenFueraDeServicio(records: MaintenanceRecord[]) {
     doc.line(mg, yy, W - mg, yy);
   };
 
-  // Header Banner
-  doc.setFillColor(26, 26, 46);
-  doc.rect(0, 0, W, 22, 'F');
-  txt('REPORTE DE MÁQUINAS FUERA DE SERVICIO', mg, 10, 13, 'bold', [200, 168, 75]);
-  txt('CASINO SANTA FE — SALA DE JUEGO', mg, 17, 9, 'normal', [180, 180, 200]);
-  txt('Fecha: ' + new Date().toLocaleString('es-AR'), W - mg - 48, 10, 8, 'normal', [180, 180, 200]);
-  txt('Total: ' + oosRecords.length + ' máq.', W - mg - 48, 17, 8, 'normal', [180, 180, 200]);
-
-  y = 32;
-
-  // Resumen Estadístico
+  const totalParque = TOTAL_CASINO_MACHINES || 815;
+  const totalInactivas = oosRecords.length;
+  const totalEnServicio = Math.max(0, totalParque - totalInactivas);
+  const operatividadPct = ((totalEnServicio / totalParque) * 100).toFixed(1);
   const enEgreso = oosRecords.filter(r => r.estado === 'egreso').length;
   const enTecnico = oosRecords.filter(r => r.estado === 'tecnico').length;
 
+  // Header Banner
+  doc.setFillColor(26, 26, 46);
+  doc.rect(0, 0, W, 22, 'F');
+  txt('REPORTE OFICIAL DE ESTADO DEL PARQUE Y MÁQUINAS FUERA DE SERVICIO', mg, 10, 13, 'bold', [200, 168, 75]);
+  txt('CASINO SANTA FE — DEPARTAMENTO DE MANTENIMIENTO Y SALA', mg, 17, 9, 'normal', [180, 180, 200]);
+  txt('Generado: ' + new Date().toLocaleString('es-AR'), W - mg - 70, 10, 8.5, 'normal', [180, 180, 200]);
+  txt(`Operatividad: ${operatividadPct}% (${totalEnServicio}/${totalParque} en servicio)`, W - mg - 70, 17, 8.5, 'bold', [200, 230, 200]);
+
+  y = 30;
+
+  // Resumen Estadístico en Caja
   doc.setFillColor(245, 245, 250);
   doc.rect(mg, y, W - mg * 2, 16, 'F');
   doc.setDrawColor(210, 210, 220);
   doc.rect(mg, y, W - mg * 2, 16, 'S');
 
-  txt('RESUMEN DE SALA:', mg + 5, y + 6, 9.5, 'bold', [30, 30, 60]);
-  txt(`• TOTAL INACTIVAS: ${oosRecords.length}`, mg + 45, y + 6, 9, 'bold', [30, 30, 30]);
-  txt(`• SOLO FUERA DE SERVICIO (ETAPA 1): ${enEgreso}`, mg + 45, y + 11, 8.5, 'normal', [180, 30, 30]);
-  txt(`• REPARADAS EN CONTROL (ETAPA 2): ${enTecnico}`, mg + 115, y + 11, 8.5, 'normal', [180, 110, 0]);
+  txt('DISPONIBILIDAD DE SALA:', mg + 5, y + 6, 9.5, 'bold', [30, 30, 60]);
+  txt(`• TOTAL PARQUE: ${totalParque} máquinas`, mg + 55, y + 6, 9, 'bold', [30, 30, 30]);
+  txt(`• EN SERVICIO: ${totalEnServicio} (${operatividadPct}%)`, mg + 125, y + 6, 9, 'bold', [20, 120, 40]);
+  txt(`• FUERA DE SERVICIO: ${totalInactivas}`, mg + 195, y + 6, 9, 'bold', [180, 30, 30]);
 
-  y += 24;
+  txt(`• F.S. ETAPA 1 (Taller/Espera): ${enEgreso}`, mg + 55, y + 11, 8.5, 'normal', [180, 30, 30]);
+  txt(`• ETAPA 2 (Reparada/Inspección): ${enTecnico}`, mg + 125, y + 11, 8.5, 'normal', [180, 110, 0]);
 
-  // Headers de la Tabla
+  y += 22;
+
+  // Headers de la Tabla Landscape
   doc.setFillColor(30, 60, 120);
   doc.rect(mg, y, W - mg * 2, 7, 'F');
   
-  txt('MÁQUINA', mg + 2, y + 5, 8.5, 'bold', [255, 255, 255]);
-  txt('ISLA', mg + 22, y + 5, 8.5, 'bold', [255, 255, 255]);
-  txt('FECHA EGRESO', mg + 40, y + 5, 8.5, 'bold', [255, 255, 255]);
-  txt('MOTIVO DE EGRESO', mg + 75, y + 5, 8.5, 'bold', [255, 255, 255]);
-  txt('ESTADO ACTUAL', mg + 145, y + 5, 8.5, 'bold', [255, 255, 255]);
+  txt('MÁQUINA', mg + 3, y + 5, 8, 'bold', [255, 255, 255]);
+  txt('ISLA', mg + 22, y + 5, 8, 'bold', [255, 255, 255]);
+  txt('FABRICANTE', mg + 36, y + 5, 8, 'bold', [255, 255, 255]);
+  txt('MODELO / GABINETE', mg + 72, y + 5, 8, 'bold', [255, 255, 255]);
+  txt('FECHA EGRESO', mg + 120, y + 5, 8, 'bold', [255, 255, 255]);
+  txt('DÍAS F.S.', mg + 152, y + 5, 8, 'bold', [255, 255, 255]);
+  txt('MOTIVO / NOTA', mg + 175, y + 5, 8, 'bold', [255, 255, 255]);
+  txt('ESTADO ACTUAL', mg + 230, y + 5, 8, 'bold', [255, 255, 255]);
 
   y += 7;
 
   if (oosRecords.length === 0) {
-    txt('No hay máquinas fuera de servicio actualmente. ¡Sala 100% operativa!', mg + 5, y + 10, 10, 'italic', [40, 120, 40]);
+    txt('No hay máquinas fuera de servicio actualmente. ¡El parque de 815 máquinas está 100% operativo!', mg + 5, y + 10, 10, 'italic', [40, 120, 40]);
   } else {
     oosRecords.forEach((r, idx) => {
-      if (y > 270) {
+      if (y > 185) {
         doc.addPage();
         y = 20;
         
-        // Repetir cabecera de tabla si hay nueva página
         doc.setFillColor(30, 60, 120);
         doc.rect(mg, y, W - mg * 2, 7, 'F');
-        txt('MÁQUINA', mg + 2, y + 5, 8.5, 'bold', [255, 255, 255]);
-        txt('ISLA', mg + 22, y + 5, 8.5, 'bold', [255, 255, 255]);
-        txt('FECHA EGRESO', mg + 40, y + 5, 8.5, 'bold', [255, 255, 255]);
-        txt('MOTIVO DE EGRESO', mg + 75, y + 5, 8.5, 'bold', [255, 255, 255]);
-        txt('ESTADO ACTUAL', mg + 145, y + 5, 8.5, 'bold', [255, 255, 255]);
+        txt('MÁQUINA', mg + 3, y + 5, 8, 'bold', [255, 255, 255]);
+        txt('ISLA', mg + 22, y + 5, 8, 'bold', [255, 255, 255]);
+        txt('FABRICANTE', mg + 36, y + 5, 8, 'bold', [255, 255, 255]);
+        txt('MODELO / GABINETE', mg + 72, y + 5, 8, 'bold', [255, 255, 255]);
+        txt('FECHA EGRESO', mg + 120, y + 5, 8, 'bold', [255, 255, 255]);
+        txt('DÍAS F.S.', mg + 152, y + 5, 8, 'bold', [255, 255, 255]);
+        txt('MOTIVO / NOTA', mg + 175, y + 5, 8, 'bold', [255, 255, 255]);
+        txt('ESTADO ACTUAL', mg + 230, y + 5, 8, 'bold', [255, 255, 255]);
         y += 7;
       }
 
-      // Línea de fondo cebra
       if (idx % 2 === 1) {
         doc.setFillColor(250, 250, 252);
         doc.rect(mg, y, W - mg * 2, 8, 'F');
       }
 
-      // Dibujar borde inferior de celda
       hLine(y + 8, [235, 235, 240]);
 
-      txt(r.egreso.maquina, mg + 2, y + 5.5, 9, 'bold', [30, 30, 30]);
-      txt(r.egreso.isla, mg + 22, y + 5.5, 9, 'normal', [50, 50, 50]);
-      txt(formatFecha(r.egreso.fecha).split(',')[0], mg + 40, y + 5.5, 8.5, 'normal', [50, 50, 50]);
+      const machineInfo = getMachineDetails(r.egreso.maquina);
+      const oosDuration = calculateOutOfServiceDuration(r.egreso.fecha);
+      const fabricanteText = machineInfo?.fabricante || '-';
+      const modeloText = machineInfo?.modelo ? `${machineInfo.modelo} (${machineInfo.gabinete || 'STD'})` : '-';
+
+      txt(r.egreso.maquina, mg + 3, y + 5.5, 8.5, 'bold', [30, 30, 30]);
+      txt(r.egreso.isla || machineInfo?.isla || '-', mg + 22, y + 5.5, 8.5, 'normal', [50, 50, 50]);
+      txt(fabricanteText, mg + 36, y + 5.5, 8, 'bold', [40, 40, 80]);
+      txt(modeloText.substring(0, 24), mg + 72, y + 5.5, 8, 'normal', [50, 50, 50]);
+      txt(formatFecha(r.egreso.fecha).split(',')[0], mg + 120, y + 5.5, 8, 'normal', [50, 50, 50]);
       
-      const motivoText = r.egreso.motivo || 'Falla';
-      txt(motivoText, mg + 75, y + 5.5, 8.5, 'normal', [50, 50, 50]);
+      const durationCol = oosDuration.badgeType === 'critical' ? [200, 30, 30] : oosDuration.badgeType === 'moderate' ? [200, 120, 0] : [80, 80, 80];
+      txt(oosDuration.label, mg + 152, y + 5.5, 8, 'bold', durationCol);
+
+      const motivoText = (r.egreso.motivo || 'Falla') + (r.egreso.nota ? ` (${r.egreso.nota})` : '');
+      txt(motivoText.substring(0, 28), mg + 175, y + 5.5, 8, 'normal', [50, 50, 50]);
 
       const stateText = r.estado === 'egreso' ? 'F. de Serv (Etapa 1)' : 'Reparada (Etapa 2)';
       const stateCol = r.estado === 'egreso' ? [180, 30, 30] : [180, 110, 0];
-      txt(stateText, mg + 145, y + 5.5, 8, 'bold', stateCol);
+      txt(stateText, mg + 230, y + 5.5, 8, 'bold', stateCol);
 
       y += 8;
     });
   }
 
   // Footer
-  txt('Fin del reporte oficial · Mantenimiento Casino Santa Fe', mg, 285, 7.5, 'normal', [140, 140, 150]);
+  txt('Fin del reporte oficial · Sistema de Mantenimiento Casino Santa Fe', mg, 198, 7.5, 'normal', [140, 140, 150]);
 
-  doc.save(`Reporte_Maquinas_Fuera_de_Servicio_${new Date().toISOString().split('T')[0]}.pdf`);
+  doc.save(`Reporte_Disponibilidad_y_FDS_${new Date().toISOString().split('T')[0]}.pdf`);
 }

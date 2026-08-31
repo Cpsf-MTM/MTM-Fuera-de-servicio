@@ -1,3 +1,12 @@
+export interface MachineInfo {
+  numero: string;
+  isla: string;
+  etapa: string; // 'HABILITADA' | 'DESHABILITADA'
+  fabricante: string;
+  modelo: string;
+  gabinete: string;
+}
+
 export interface EgresoData {
   maquina: string;
   isla: string;
