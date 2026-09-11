@@ -1,7 +1,40 @@
 import { MaintenanceRecord, FlatRecord, RecordEstado } from '../types';
 
-const API_URL = (import.meta as any).env?.VITE_API_URL || 'https://script.google.com/macros/s/AKfycbyPCLAuMIv0dnvbj78NdSQRx_iNYhFTCMhiElN-6pc0YQbyw6gE-nNexv6V_f8MYevD/exec';
+export const DEFAULT_API_URL = (import.meta as any).env?.VITE_API_URL || 'https://script.google.com/macros/s/AKfycbyPCLAuMIv0dnvbj78NdSQRx_iNYhFTCMhiElN-6pc0YQbyw6gE-nNexv6V_f8MYevD/exec';
 const LOCAL_STORAGE_KEY = 'mantenimiento_records_cache';
+const CUSTOM_API_URL_KEY = 'casino_custom_api_url';
+
+export function getApiUrl(): string {
+  try {
+    const custom = localStorage.getItem(CUSTOM_API_URL_KEY);
+    if (custom && custom.trim().length > 10) {
+      return custom.trim();
+    }
+  } catch (e) {
+    console.warn('Error reading custom API URL from storage:', e);
+  }
+  return DEFAULT_API_URL;
+}
+
+export function setCustomApiUrl(url: string): void {
+  try {
+    if (!url || !url.trim()) {
+      localStorage.removeItem(CUSTOM_API_URL_KEY);
+    } else {
+      localStorage.setItem(CUSTOM_API_URL_KEY, url.trim());
+    }
+  } catch (e) {
+    console.error('Error saving custom API URL:', e);
+  }
+}
+
+export function resetCustomApiUrl(): void {
+  try {
+    localStorage.removeItem(CUSTOM_API_URL_KEY);
+  } catch (e) {
+    console.error('Error removing custom API URL:', e);
+  }
+}
 
 // Conversión de formato plano (Google Sheets) a jerárquico (React App)
 export function parseFlatRecord(r: FlatRecord): MaintenanceRecord {
@@ -216,12 +249,13 @@ export function getLocalCache(): MaintenanceRecord[] {
 }
 
 // Realizar llamada de red al script de Google
-async function fetchFromGAS(action: string, data?: any): Promise<any> {
+async function fetchFromGAS(action: string, data?: any, overrideUrl?: string): Promise<any> {
+  const targetUrl = overrideUrl || getApiUrl();
   const controller = new AbortController();
-  const idTimeout = setTimeout(() => controller.abort(), 8000); // 8 segundos timeout
+  const idTimeout = setTimeout(() => controller.abort(), 9000); // 9 segundos timeout
 
   try {
-    const response = await fetch(API_URL, {
+    const response = await fetch(targetUrl, {
       method: 'POST',
       body: JSON.stringify({ action, data }),
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -234,10 +268,142 @@ async function fetchFromGAS(action: string, data?: any): Promise<any> {
       throw new Error(`HTTP Error: ${response.status}`);
     }
     
-    return await response.json();
+    const text = await response.text();
+    try {
+      return JSON.parse(text);
+    } catch (parseErr) {
+      // Si devolvió HTML en vez de JSON (típico de Google cuando pide login o falta permiso)
+      if (text.includes('<!DOCTYPE') || text.includes('<html')) {
+        throw new Error('Google Apps Script devolvió una página HTML en lugar de JSON. Es probable que falte configurar "Quién tiene acceso: Cualquier persona (Anyone)".');
+      }
+      throw new Error(`Respuesta inválida del servidor: ${text.slice(0, 100)}`);
+    }
   } catch (e) {
     clearTimeout(idTimeout);
     throw e;
+  }
+}
+
+// Probar conexión contra la URL de Google Apps Script
+export async function testApiConnection(customUrl?: string): Promise<{ 
+  success: boolean; 
+  message: string; 
+  details?: string;
+  count?: number;
+}> {
+  const targetUrl = customUrl ? customUrl.trim() : getApiUrl();
+
+  if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
+    return {
+      success: false,
+      message: 'URL inválida',
+      details: 'La URL debe comenzar con "https://script.google.com/macros/s/..." y terminar en "/exec"'
+    };
+  }
+
+  try {
+    // 1. Probar primero con llamada POST getAll
+    const result = await fetchFromGAS('getAll', null, targetUrl);
+    if (result && Array.isArray(result.registros)) {
+      return {
+        success: true,
+        message: '¡Conexión exitosa con Google Sheets!',
+        details: `La API respondió correctamente. Se encontraron ${result.registros.length} registros en la hoja de cálculo.`,
+        count: result.registros.length
+      };
+    }
+
+    if (result && result.status === 'ok') {
+      return {
+        success: true,
+        message: '¡Conexión exitosa con Google Sheets!',
+        details: result.message || 'La API respondió correctamente.'
+      };
+    }
+
+    return {
+      success: false,
+      message: 'Respuesta inesperada',
+      details: result?.error || 'El script respondió pero con formato de datos desconocido.'
+    };
+  } catch (err: any) {
+    const errorMsg = String(err?.message || err || '');
+    
+    if (errorMsg.includes('Cualquier persona') || errorMsg.includes('HTML')) {
+      return {
+        success: false,
+        message: 'Error de permisos en Google Apps Script',
+        details: 'El script existe, pero Google bloqueó el acceso. Ve a tu Google Apps Script > Implementar > Gestionar implementaciones y asegúrate de que "Quién tiene acceso" esté en "Cualquier persona" (Anyone).'
+      };
+    }
+
+    if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError') || errorMsg.includes('abort')) {
+      return {
+        success: false,
+        message: 'No se pudo conectar con el servidor',
+        details: 'El navegador no pudo comunicarse con la URL. Revisa que tu conexión a internet funcione, que la URL termine en "/exec" y que el despliegue esté publicado para "Cualquier persona".'
+      };
+    }
+
+    return {
+      success: false,
+      message: 'Fallo al verificar la API',
+      details: errorMsg
+    };
+  }
+}
+
+// Sincronizar todos los registros del caché local a Google Sheets
+export async function syncAllLocalToRemote(): Promise<{
+  success: boolean;
+  inserted?: number;
+  updated?: number;
+  message: string;
+}> {
+  const localRecords = getLocalCache();
+  if (localRecords.length === 0) {
+    return { success: true, message: 'No hay registros locales pendientes para sincronizar.' };
+  }
+
+  try {
+    const flatRecords = localRecords.map(flattenRecord);
+    // Intentar syncBatch
+    try {
+      const batchResult = await fetchFromGAS('syncBatch', flatRecords);
+      if (batchResult && batchResult.success) {
+        return {
+          success: true,
+          inserted: batchResult.inserted || 0,
+          updated: batchResult.updated || 0,
+          message: `Sincronizados exitosamente ${localRecords.length} registros con Google Sheets.`
+        };
+      }
+    } catch (e) {
+      console.warn('Fallo syncBatch, intentando registro por registro...', e);
+    }
+
+    // Fallback registro por registro
+    let okCount = 0;
+    for (const r of localRecords) {
+      try {
+        const flat = flattenRecord(r);
+        await fetchFromGAS('update', flat);
+        okCount++;
+      } catch (err) {
+        console.error('Error al sincronizar registro individual:', r.id, err);
+      }
+    }
+
+    return {
+      success: okCount > 0,
+      updated: okCount,
+      message: `Se sincronizaron ${okCount} de ${localRecords.length} registros con Google Sheets.`
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Error al sincronizar con la nube: ${err?.message || err}`
+    };
   }
 }
 
