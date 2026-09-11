@@ -145,7 +145,7 @@ export default function App() {
     }, 5000);
   };
 
-  const fetchData = async () => {
+  const fetchData = async (isManualRefresh: boolean = false) => {
     setLoading(true);
     const res = await loadRecords();
     
@@ -161,10 +161,12 @@ export default function App() {
     
     setRecords(uniqueRecords);
     setConnectionStatus({ source: res.source, error: res.error });
-    if (res.error) {
-      addAlert(res.error, 'info');
-    } else {
-      addAlert('Registros actualizados desde el servidor.', 'success');
+    if (isManualRefresh) {
+      if (res.error) {
+        addAlert(res.error, 'info');
+      } else {
+        addAlert('Registros actualizados desde el servidor.', 'success');
+      }
     }
     setLoading(false);
   };
@@ -660,7 +662,7 @@ export default function App() {
             </button>
 
             <button
-              onClick={fetchData}
+              onClick={() => fetchData(true)}
               disabled={loading}
               className="p-2 rounded-lg bg-[#1a1a2e] hover:bg-[#25253e] border border-[#c8a84b]/25 transition-all text-[#c8a84b]"
               title="Sincronizar y actualizar"

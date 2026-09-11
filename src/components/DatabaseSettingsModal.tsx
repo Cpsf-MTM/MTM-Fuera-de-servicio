@@ -15,7 +15,8 @@ import {
   ArrowUpRight,
   UploadCloud,
   HelpCircle,
-  Settings
+  Settings,
+  Mail
 } from 'lucide-react';
 import { 
   getApiUrl, 
@@ -304,6 +305,54 @@ export default function DatabaseSettingsModal({
                   )}
                 </div>
               )}
+
+              {/* Destinatarios de Correos Oficiales */}
+              <div className="bg-[#171728] p-4 rounded-xl border border-[#c8a84b]/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-white font-semibold">
+                    <Mail className="w-4 h-4 text-[#f0d882]" />
+                    <span>Notificaciones Automáticas por Correo (Configuradas)</span>
+                  </div>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950/70 border border-emerald-500/30 text-emerald-300">
+                    Activas en Apps Script
+                  </span>
+                </div>
+
+                <div className="space-y-2 text-[11px]">
+                  <div className="p-2.5 rounded-lg bg-[#0e0e1a] border border-white/5 space-y-1">
+                    <div className="flex items-center justify-between text-[#f0d882] font-semibold">
+                      <span>Técnicos (Paso 1: Egreso / Fuera de servicio):</span>
+                      <span className="text-[10px] text-[#9090a8]">1 casilla</span>
+                    </div>
+                    <code className="text-[11px] text-white/90 break-all">Tecnicos.SF@casinostafe.com.ar</code>
+                  </div>
+
+                  <div className="p-2.5 rounded-lg bg-[#0e0e1a] border border-white/5 space-y-1">
+                    <div className="flex items-center justify-between text-[#f0d882] font-semibold">
+                      <span>Juego / Supervisión (Pasos 1, 2 y 3):</span>
+                      <span className="text-[10px] text-[#9090a8]">11 destinatarios</span>
+                    </div>
+                    <p className="text-[10px] text-[#a0a0b8] leading-relaxed break-words font-mono">
+                      vanina.anzotegui, david.humoller, pablo.gomez, matias.girsa, cristian.graglia, crysthian.pons, erica.vazquez, luis.ortega, alejandro.rey, andrea.lana, vanesa.lopez (@casinostafe.com.ar)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[10px]">
+                  <div className="p-2 rounded bg-rose-950/20 border border-rose-500/20">
+                    <strong className="text-rose-300 block mb-0.5">Paso 1: Egreso</strong>
+                    <span className="text-rose-200/80">Aviso a Técnicos + Juego</span>
+                  </div>
+                  <div className="p-2 rounded bg-amber-950/20 border border-amber-500/20">
+                    <strong className="text-amber-300 block mb-0.5">Paso 2: Reparación</strong>
+                    <span className="text-amber-200/80">Aviso solo a Juego</span>
+                  </div>
+                  <div className="p-2 rounded bg-emerald-950/20 border border-emerald-500/20">
+                    <strong className="text-emerald-300 block mb-0.5">Paso 3: Reingreso</strong>
+                    <span className="text-emerald-200/80">Aviso final a Juego</span>
+                  </div>
+                </div>
+              </div>
 
               {/* Sincronización de registros locales */}
               <div className="bg-[#171728] p-4 rounded-xl border border-[#c8a84b]/15 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">

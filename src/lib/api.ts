@@ -248,11 +248,13 @@ export function getLocalCache(): MaintenanceRecord[] {
   return [];
 }
 
-// Realizar llamada de red al script de Google
-async function fetchFromGAS(action: string, data?: any, overrideUrl?: string): Promise<any> {
+// Realizar llamada de red al script de Google con reintento y tolerancia a "cold start"
+async function fetchFromGAS(action: string, data?: any, overrideUrl?: string, attempt: number = 1): Promise<any> {
   const targetUrl = overrideUrl || getApiUrl();
   const controller = new AbortController();
-  const idTimeout = setTimeout(() => controller.abort(), 9000); // 9 segundos timeout
+  // En Google Apps Script el arranque en frío ("cold start") puede tardar entre 8 y 14 segundos
+  const timeoutMs = attempt === 1 ? 15000 : 20000;
+  const idTimeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(targetUrl, {
@@ -278,8 +280,13 @@ async function fetchFromGAS(action: string, data?: any, overrideUrl?: string): P
       }
       throw new Error(`Respuesta inválida del servidor: ${text.slice(0, 100)}`);
     }
-  } catch (e) {
+  } catch (e: any) {
     clearTimeout(idTimeout);
+    // Si fue timeout o error de red y es el primer intento, reintentar una vez (despertar el script)
+    if (attempt < 2 && (e.name === 'AbortError' || e.message?.includes('network') || e.message?.includes('fetch'))) {
+      console.warn(`Reintentando conexión con Google Apps Script (intento 2)...`);
+      return fetchFromGAS(action, data, overrideUrl, attempt + 1);
+    }
     throw e;
   }
 }
