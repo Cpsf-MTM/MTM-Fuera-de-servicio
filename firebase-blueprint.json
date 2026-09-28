@@ -1,0 +1,99 @@
+{
+  "entities": {
+    "maintenanceRecord": {
+      "title": "Maintenance Record",
+      "description": "Registro de mantenimiento correctivo y fuera de servicio de máquinas de Casino Santa Fe",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identificador único del registro de mantenimiento",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "estado": {
+          "type": "string",
+          "description": "Estado de la máquina en el flujo de mantenimiento",
+          "enum": ["egreso", "tecnico", "completo"]
+        },
+        "egreso": {
+          "type": "object",
+          "description": "Datos de egreso / fuera de servicio de la máquina"
+        },
+        "tecnico": {
+          "type": "object",
+          "description": "Datos de reparación técnica"
+        },
+        "inspector": {
+          "type": "object",
+          "description": "Datos de inspección y reingreso a sala"
+        },
+        "created_at": {
+          "type": "string",
+          "description": "Timestamp de creación ISO"
+        },
+        "updated_at": {
+          "type": "string",
+          "description": "Timestamp de última modificación ISO"
+        }
+      },
+      "required": ["id", "estado", "egreso", "created_at", "updated_at"]
+    },
+    "backupRecord": {
+      "title": "Database Backup",
+      "description": "Respaldo y copia de seguridad de la base de datos de mantenimiento",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "ID único del respaldo",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "label": {
+          "type": "string",
+          "description": "Etiqueta o motivo del respaldo",
+          "maxLength": 200
+        },
+        "recordCount": {
+          "type": "number",
+          "description": "Cantidad de registros respaldados"
+        },
+        "created_at": {
+          "type": "string",
+          "description": "Fecha y hora del respaldo ISO"
+        },
+        "dataJson": {
+          "type": "string",
+          "description": "Copia serializada de los registros"
+        }
+      },
+      "required": ["id", "label", "recordCount", "created_at", "dataJson"]
+    },
+    "testConnection": {
+      "title": "Test Connection",
+      "description": "Documento de verificación de conectividad a Firestore",
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "Estado de conexión"
+        }
+      }
+    }
+  },
+  "firestore": {
+    "/maintenance_records/{recordId}": {
+      "schema": "maintenanceRecord",
+      "description": "Colección principal de registros de mantenimiento y servicio de máquinas de azar"
+    },
+    "/backups/{backupId}": {
+      "schema": "backupRecord",
+      "description": "Colección de respaldos y puntos de restauración del casino"
+    },
+    "/test/{testId}": {
+      "schema": "testConnection",
+      "description": "Colección para pruebas de conectividad de la aplicación"
+    }
+  }
+}

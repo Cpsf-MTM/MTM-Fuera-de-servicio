@@ -160,7 +160,7 @@ export function generarPDF(r: MaintenanceRecord) {
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(30, 30, 30);
-    const lines = doc.splitTextToSize(r.tecnico.solucion, W - mg * 2);
+    const lines = doc.splitTextToSize(r.tecnico.solucion || 'Intervención técnica general / Sin detalle especificado', W - mg * 2);
     doc.text(lines, mg, y);
     y += lines.length * 5 + 4;
     
@@ -221,7 +221,7 @@ export function generarPDF(r: MaintenanceRecord) {
     const billetes = ['$20.000', '$10.000', '$2.000', '$1.000', '$500', '$200', '$100'];
     
     billetes.forEach((b) => {
-      const st = r.inspector?.checksBilletes[b] || 'S/D';
+      const st = r.inspector?.checksBilletes?.[b] || 'S/D';
       const x = ci % 2 === 0 ? mg : midX;
       const col = st === 'ok' ? [0, 120, 60] : st === 'fail' ? [180, 30, 30] : [120, 120, 120];
       const label = st === 'ok' ? '✓ OK' : st === 'fail' ? '✗ FALLA' : 'S/D';
@@ -246,7 +246,7 @@ export function generarPDF(r: MaintenanceRecord) {
     
     const extras = ['Descuento AFT correcto', 'Acredita tickets correctamente'];
     extras.forEach((ex) => {
-      const st = r.inspector?.checksExtras[ex] || 'S/D';
+      const st = r.inspector?.checksExtras?.[ex] || 'S/D';
       const col = st === 'ok' ? [0, 120, 60] : st === 'fail' ? [180, 30, 30] : [120, 120, 120];
       const label = st === 'ok' ? '✓ OK' : st === 'fail' ? '✗ FALLA' : 'S/D';
       

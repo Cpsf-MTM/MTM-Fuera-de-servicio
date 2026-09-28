@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Helper to validate maintenance record schema
+    function isValidMaintenanceRecord(data) {
+      return data.id is string &&
+             isValidId(data.id) &&
+             data.estado is string &&
+             data.egreso is map;
+    }
+
+    // Helper to validate backup record schema
+    function isValidBackupRecord(data) {
+      return data.id is string &&
+             isValidId(data.id) &&
+             data.label is string &&
+             data.dataJson is string;
+    }
+
+    // Test connection endpoint
+    match /test/{testId} {
+      allow get: if isValidId(testId);
+      allow list: if true;
+      allow write: if isValidId(testId);
+    }
+
+    // Maintenance records collection
+    match /maintenance_records/{recordId} {
+      allow get: if isValidId(recordId);
+      allow list: if true;
+
+      allow create: if isValidId(recordId) &&
+                      incoming().id == recordId &&
+                      isValidMaintenanceRecord(incoming());
+
+      allow update: if isValidId(recordId) &&
+                      incoming().id == recordId &&
+                      incoming().id == existing().id &&
+                      isValidMaintenanceRecord(incoming());
+
+      allow delete: if isValidId(recordId);
+    }
+
+    // Backups collection
+    match /backups/{backupId} {
+      allow get: if isValidId(backupId);
+      allow list: if true;
+
+      allow create: if isValidId(backupId) &&
+                      incoming().id == backupId &&
+                      isValidBackupRecord(incoming());
+
+      allow update: if isValidId(backupId) &&
+                      incoming().id == backupId &&
+                      incoming().id == existing().id &&
+                      isValidBackupRecord(incoming());
+
+      allow delete: if isValidId(backupId);
+    }
+  }
+}

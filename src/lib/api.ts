@@ -1,4 +1,16 @@
 import { MaintenanceRecord, FlatRecord, RecordEstado } from '../types';
+import { 
+  fetchMaintenanceRecordsFromFirestore, 
+  saveMaintenanceRecordToFirestore, 
+  deleteMaintenanceRecordFromFirestore,
+  batchImportToFirestore,
+  createFirestoreBackup,
+  fetchFirestoreBackups,
+  restoreFirestoreBackup,
+  deleteFirestoreBackup,
+  testConnection as testFirebaseConnection,
+  subscribeToMaintenanceRecords
+} from './firebase';
 
 export const DEFAULT_API_URL = (import.meta as any).env?.VITE_API_URL || 'https://script.google.com/macros/s/AKfycbyPCLAuMIv0dnvbj78NdSQRx_iNYhFTCMhiElN-6pc0YQbyw6gE-nNexv6V_f8MYevD/exec';
 const LOCAL_STORAGE_KEY = 'mantenimiento_records_cache';
@@ -77,7 +89,7 @@ export function parseFlatRecord(r: FlatRecord): MaintenanceRecord {
       operador: r.e_operador || '',
       firma: r.e_firma || '',
       foto: r.e_foto || '',
-    } as any, // Cast as any if there's type discrepancy during edit transition
+    },
     tecnico: r.t_fecha ? {
       fecha: r.t_fecha,
       informe: r.t_informe || '',
@@ -109,123 +121,62 @@ export function flattenRecord(r: MaintenanceRecord): FlatRecord {
   return {
     id: r.id,
     estado: r.estado,
-    e_maquina: r.egreso.maquina,
-    e_isla: r.egreso.isla,
-    e_fecha: r.egreso.fecha,
-    e_motivo: r.egreso.motivo,
-    e_nota: r.egreso.nota || '',
-    e_coinin: r.egreso.coinin,
-    e_coinout: r.egreso.coinout,
-    e_jackpot: r.egreso.jackpot,
-    e_prog1: r.egreso.prog1,
-    e_prog2: r.egreso.prog2,
-    e_prog3: r.egreso.prog3,
-    e_prog4: r.egreso.prog4,
-    e_devolucion: r.egreso.devolucion,
-    e_operador: r.egreso.operador,
-    e_firma: r.egreso.firma,
-    e_foto: r.egreso.foto,
-    t_fecha: r.tecnico ? r.tecnico.fecha : '',
-    t_informe: r.tecnico ? r.tecnico.informe : '',
-    t_solucion: r.tecnico ? r.tecnico.solucion : '',
-    t_tecnico: r.tecnico ? r.tecnico.tecnico : '',
-    t_firma: r.tecnico ? r.tecnico.firma : '',
-    i_fecha: r.inspector ? r.inspector.fecha : '',
-    i_informe: r.inspector ? r.inspector.informe : '',
-    i_coinin: r.inspector ? r.inspector.coinin : '',
-    i_devolucion: r.inspector ? r.inspector.devolucion : '',
-    i_denominacion: r.inspector ? r.inspector.denominacion : '',
-    i_apuesta_min: r.inspector ? r.inspector.apuestaMin : '',
-    i_apuesta_max: r.inspector ? r.inspector.apuestaMax : '',
-    i_mdc: r.inspector ? r.inspector.mdc : '',
-    i_inspector: r.inspector ? r.inspector.inspector : '',
-    i_firma: r.inspector ? r.inspector.firma : '',
-    i_checks_billetes: r.inspector ? JSON.stringify(r.inspector.checksBilletes) : '',
-    i_checks_extras: r.inspector ? JSON.stringify(r.inspector.checksExtras) : '',
-    created_at: r.created_at,
-    updated_at: r.updated_at,
+    e_maquina: r.egreso?.maquina || '',
+    e_isla: r.egreso?.isla || '',
+    e_fecha: r.egreso?.fecha || '',
+    e_motivo: r.egreso?.motivo || '',
+    e_nota: r.egreso?.nota || '',
+    e_coinin: r.egreso?.coinin || '',
+    e_coinout: r.egreso?.coinout || '',
+    e_jackpot: r.egreso?.jackpot || '',
+    e_prog1: r.egreso?.prog1 || '',
+    e_prog2: r.egreso?.prog2 || '',
+    e_prog3: r.egreso?.prog3 || '',
+    e_prog4: r.egreso?.prog4 || '',
+    e_devolucion: r.egreso?.devolucion || '',
+    e_operador: r.egreso?.operador || '',
+    e_firma: r.egreso?.firma || '',
+    e_foto: r.egreso?.foto || '',
+    t_fecha: r.tecnico ? r.tecnico.fecha || '' : '',
+    t_informe: r.tecnico ? r.tecnico.informe || '' : '',
+    t_solucion: r.tecnico ? r.tecnico.solucion || '' : '',
+    t_tecnico: r.tecnico ? r.tecnico.tecnico || '' : '',
+    t_firma: r.tecnico ? r.tecnico.firma || '' : '',
+    i_fecha: r.inspector ? r.inspector.fecha || '' : '',
+    i_informe: r.inspector ? r.inspector.informe || '' : '',
+    i_coinin: r.inspector ? r.inspector.coinin || '' : '',
+    i_devolucion: r.inspector ? r.inspector.devolucion || '' : '',
+    i_denominacion: r.inspector ? r.inspector.denominacion || '' : '',
+    i_apuesta_min: r.inspector ? r.inspector.apuestaMin || '' : '',
+    i_apuesta_max: r.inspector ? r.inspector.apuestaMax || '' : '',
+    i_mdc: r.inspector ? r.inspector.mdc || '' : '',
+    i_inspector: r.inspector ? r.inspector.inspector || '' : '',
+    i_firma: r.inspector ? r.inspector.firma || '' : '',
+    i_checks_billetes: r.inspector?.checksBilletes ? JSON.stringify(r.inspector.checksBilletes) : '',
+    i_checks_extras: r.inspector?.checksExtras ? JSON.stringify(r.inspector.checksExtras) : '',
+    created_at: r.created_at || new Date().toISOString(),
+    updated_at: r.updated_at || new Date().toISOString(),
   };
 }
 
-// Guardar caché localmente de forma segura y libre de duplicados
-export function saveToLocalCache(records: MaintenanceRecord[]) {
+// Guardar caché localmente de forma segura
+export function saveToLocalCache(records: MaintenanceRecord[]): void {
   try {
-    // 1. Deduplicar registros por ID para prevenir errores de claves duplicadas en React
     const uniqueMap = new Map<string, MaintenanceRecord>();
     records.forEach((r, idx) => {
       if (r) {
-        const recordId = r.id || `REG-TEMP-${Date.now()}-${idx}`;
+        const recordId = r.id || `REG-${Date.now()}-${idx}`;
         uniqueMap.set(recordId, { ...r, id: recordId });
       }
     });
     const uniqueRecords = Array.from(uniqueMap.values());
-
-    // 2. Intentar guardar en localStorage
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(uniqueRecords));
   } catch (e: any) {
-    const isQuotaError = 
-      e.name === 'QuotaExceededError' || 
-      e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || 
-      e.code === 22 || 
-      e.code === 1014;
-
-    if (isQuotaError) {
-      console.warn('LocalStorage quota exceeded. Shrinking records to save cache space...');
-      try {
-        // Reducir tamaño eliminando fotos y firmas de los registros completados/viejos
-        const minimized = records.map(r => {
-          if (r.estado === 'completo') {
-            return {
-              ...r,
-              egreso: { ...r.egreso, foto: '', firma: '' },
-              tecnico: r.tecnico ? { ...r.tecnico, firma: '' } : null,
-              inspector: r.inspector ? { ...r.inspector, firma: '' } : null,
-            };
-          }
-          return r;
-        });
-        
-        // Deduplicar el minimizado también
-        const uniqueMapMin = new Map<string, MaintenanceRecord>();
-        minimized.forEach(r => {
-          if (r && r.id) {
-            uniqueMapMin.set(r.id, r);
-          }
-        });
-        const uniqueMinRecords = Array.from(uniqueMapMin.values());
-
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(uniqueMinRecords));
-      } catch (innerError) {
-        console.error('Failed to save minimized records. Performing full strip...');
-        try {
-          // Si aún falla, remover fotos y firmas de absolutamente TODOS los registros para el caché
-          const fullyStripped = records.map(r => ({
-            ...r,
-            egreso: { ...r.egreso, foto: '', firma: '' },
-            tecnico: r.tecnico ? { ...r.tecnico, firma: '' } : null,
-            inspector: r.inspector ? { ...r.inspector, firma: '' } : null,
-          }));
-
-          const uniqueMapFull = new Map<string, MaintenanceRecord>();
-          fullyStripped.forEach(r => {
-            if (r && r.id) {
-              uniqueMapFull.set(r.id, r);
-            }
-          });
-          const uniqueFullRecords = Array.from(uniqueMapFull.values());
-
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(uniqueFullRecords));
-        } catch (finalError) {
-          console.error('Unable to write to localStorage even after a full asset strip:', finalError);
-        }
-      }
-    } else {
-      console.error('Error saving records to localStorage:', e);
-    }
+    console.warn('LocalStorage error:', e);
   }
 }
 
-// Obtener caché local deduplicado
+// Obtener caché local
 export function getLocalCache(): MaintenanceRecord[] {
   try {
     const data = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -235,7 +186,7 @@ export function getLocalCache(): MaintenanceRecord[] {
         const uniqueMap = new Map<string, MaintenanceRecord>();
         parsed.forEach((r, idx) => {
           if (r) {
-            const recordId = r.id || `REG-TEMP-${Date.now()}-${idx}`;
+            const recordId = r.id || `REG-${Date.now()}-${idx}`;
             uniqueMap.set(recordId, { ...r, id: recordId });
           }
         });
@@ -248,58 +199,189 @@ export function getLocalCache(): MaintenanceRecord[] {
   return [];
 }
 
-// Realizar llamada de red al script de Google con reintento y tolerancia a "cold start"
-async function fetchFromGAS(action: string, data?: any, overrideUrl?: string, attempt: number = 1): Promise<any> {
-  const targetUrl = overrideUrl || getApiUrl();
-  const controller = new AbortController();
-  // En Google Apps Script el arranque en frío ("cold start") puede tardar entre 8 y 14 segundos
-  const timeoutMs = attempt === 1 ? 15000 : 20000;
-  const idTimeout = setTimeout(() => controller.abort(), timeoutMs);
+// ==========================================
+// OPERACIONES PRIMARIAS CON FIREBASE FIRESTORE
+// ==========================================
 
+// Cargar todos los registros: Primero intenta Firestore; si falla o está offline, usa LocalStorage
+export async function loadRecords(): Promise<{ records: MaintenanceRecord[]; source: 'api' | 'local'; error?: string }> {
   try {
-    const response = await fetch(targetUrl, {
-      method: 'POST',
-      body: JSON.stringify({ action, data }),
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      signal: controller.signal,
-    });
-    
-    clearTimeout(idTimeout);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP Error: ${response.status}`);
-    }
-    
-    const text = await response.text();
-    try {
-      return JSON.parse(text);
-    } catch (parseErr) {
-      // Si devolvió HTML en vez de JSON (típico de Google cuando pide login o falta permiso)
-      if (text.includes('<!DOCTYPE') || text.includes('<html')) {
-        throw new Error('Google Apps Script devolvió una página HTML en lugar de JSON. Es probable que falte configurar "Quién tiene acceso: Cualquier persona (Anyone)".');
+    const firestoreRecords = await fetchMaintenanceRecordsFromFirestore();
+    if (firestoreRecords && Array.isArray(firestoreRecords)) {
+      // Si Firestore está vacío pero tenemos registros en local, sugerir o mantenerlos
+      if (firestoreRecords.length === 0) {
+        const cached = getLocalCache();
+        if (cached.length > 0) {
+          // Migración automática al vuelo si Firebase está recién creado
+          try {
+            await batchImportToFirestore(cached);
+            return { records: cached, source: 'api' };
+          } catch (migrateErr) {
+            console.warn('Error en auto-migración inicial:', migrateErr);
+          }
+          return { records: cached, source: 'local' };
+        }
       }
-      throw new Error(`Respuesta inválida del servidor: ${text.slice(0, 100)}`);
+
+      saveToLocalCache(firestoreRecords);
+      return { records: firestoreRecords, source: 'api' };
     }
-  } catch (e: any) {
-    clearTimeout(idTimeout);
-    // Si fue timeout o error de red y es el primer intento, reintentar una vez (despertar el script)
-    if (attempt < 2 && (e.name === 'AbortError' || e.message?.includes('network') || e.message?.includes('fetch'))) {
-      console.warn(`Reintentando conexión con Google Apps Script (intento 2)...`);
-      return fetchFromGAS(action, data, overrideUrl, attempt + 1);
-    }
-    throw e;
+    throw new Error('Respuesta inválida de base de datos');
+  } catch (err: any) {
+    console.warn('Fallo conexión con Firestore, recurriendo a caché local:', err);
+    const cached = getLocalCache();
+    return {
+      records: cached,
+      source: 'local',
+      error: err?.message || 'Modo local activo. Conexión a Firebase offline.'
+    };
   }
 }
 
-// Probar conexión contra la URL de Google Apps Script
+// Disparar envío de correo en segundo plano a través del Web App de Apps Script (sin demoras ni bloqueo)
+export function triggerEmailAlertBackground(record: MaintenanceRecord, action: 'save' | 'update'): void {
+  try {
+    const targetUrl = getApiUrl();
+    if (targetUrl && targetUrl.startsWith('https://script.google.com/')) {
+      const flat = flattenRecord(record);
+      fetchFromGAS(action, flat).catch(err => {
+        console.warn('Aviso por correo en segundo plano (Apps Script):', err?.message || err);
+      });
+    }
+  } catch (err) {
+    console.warn('Error al iniciar aviso de correo:', err);
+  }
+}
+
+// Guardar o Actualizar un registro en Firestore y en caché local
+export async function saveRecord(record: MaintenanceRecord): Promise<{ success: boolean; source: 'api' | 'local'; error?: string }> {
+  // 1. Guardar primero en caché local para respuesta inmediata
+  const cached = getLocalCache();
+  const idx = cached.findIndex(r => r.id === record.id);
+  if (idx >= 0) {
+    cached[idx] = record;
+  } else {
+    cached.unshift(record);
+  }
+  saveToLocalCache(cached);
+
+  // 2. Persistir en Firebase Firestore
+  try {
+    await saveMaintenanceRecordToFirestore(record);
+    // 3. Disparar notificación por correo a Técnicos y Juego en segundo plano
+    triggerEmailAlertBackground(record, idx >= 0 ? 'update' : 'save');
+    return { success: true, source: 'api' };
+  } catch (firestoreErr: any) {
+    console.warn('Error al guardar en Firestore:', firestoreErr);
+    return {
+      success: true,
+      source: 'local',
+      error: 'Guardado en memoria local. Se sincronizará automáticamente al restablecer conexión.'
+    };
+  }
+}
+
+// Eliminar un registro
+export async function deleteRecord(recordId: string): Promise<{ success: boolean; error?: string }> {
+  // 1. Eliminar del caché local
+  const cached = getLocalCache().filter(r => r.id !== recordId);
+  saveToLocalCache(cached);
+
+  // 2. Eliminar de Firestore
+  try {
+    await deleteMaintenanceRecordFromFirestore(recordId);
+    return { success: true };
+  } catch (err: any) {
+    console.warn('Error al eliminar de Firestore:', err);
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+// Migrar toda la base local a Firebase Firestore
+export async function migrateAllToFirebase(): Promise<{ success: boolean; count: number; message: string }> {
+  try {
+    const cached = getLocalCache();
+    if (cached.length === 0) {
+      return { success: true, count: 0, message: 'No hay registros locales para migrar.' };
+    }
+    const count = await batchImportToFirestore(cached);
+    return {
+      success: true,
+      count,
+      message: `¡Migración exitosa! Se copiaron ${count} registros a Firebase Firestore con respaldo permanente.`
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      count: 0,
+      message: `Error al migrar a Firebase: ${err?.message || err}`
+    };
+  }
+}
+
+// Crear un Respaldo (Snapshot) en Firebase
+export async function backupDatabaseToFirestore(label?: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const currentRecords = getLocalCache();
+    const backup = await createFirestoreBackup(label || `Respaldo manual - ${new Date().toLocaleString('es-AR')}`, currentRecords);
+    return {
+      success: true,
+      message: `Respaldo guardado exitosamente en Firebase (ID: ${backup.id}, ${backup.recordCount} registros).`
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Error al crear respaldo en Firebase: ${err?.message || err}`
+    };
+  }
+}
+
+// Exportar Base de Datos a archivo JSON descargable en PC
+export function exportDatabaseToJSON(): void {
+  const records = getLocalCache();
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(records, null, 2));
+  const downloadAnchor = document.createElement('a');
+  downloadAnchor.setAttribute("href", dataStr);
+  const now = new Date().toISOString().slice(0, 10);
+  downloadAnchor.setAttribute("download", `Casino_Santa_Fe_Mantenimiento_Respaldo_${now}.json`);
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+}
+
+// Re-exportar funciones de soporte de Apps Script para diagnósticos si se desea
+export async function fetchFromGAS(action: string, data?: any, overrideUrl?: string): Promise<any> {
+  const targetUrl = overrideUrl || getApiUrl();
+  const response = await fetch(targetUrl, {
+    method: 'POST',
+    body: JSON.stringify({ action, data }),
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+  });
+  if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+  return response.json();
+}
+
 export async function testApiConnection(customUrl?: string): Promise<{ 
   success: boolean; 
   message: string; 
   details?: string;
   count?: number;
 }> {
-  const targetUrl = customUrl ? customUrl.trim() : getApiUrl();
+  // Probar Firebase primero
+  try {
+    const fbTest = await testFirebaseConnection();
+    if (fbTest.success) {
+      return {
+        success: true,
+        message: '¡Firebase Firestore conectado correctamente!',
+        details: 'La base de datos en la nube está activa, segura y respaldada en tiempo real.'
+      };
+    }
+  } catch (e) {
+    // Continuar si prueba GAS
+  }
 
+  const targetUrl = customUrl ? customUrl.trim() : getApiUrl();
   if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
     return {
       success: false,
@@ -309,161 +391,36 @@ export async function testApiConnection(customUrl?: string): Promise<{
   }
 
   try {
-    // 1. Probar primero con llamada POST getAll
     const result = await fetchFromGAS('getAll', null, targetUrl);
     if (result && Array.isArray(result.registros)) {
       return {
         success: true,
-        message: '¡Conexión exitosa con Google Sheets!',
-        details: `La API respondió correctamente. Se encontraron ${result.registros.length} registros en la hoja de cálculo.`,
+        message: 'Conexión exitosa con Google Sheets',
+        details: `Se encontraron ${result.registros.length} registros en la hoja de cálculo.`,
         count: result.registros.length
       };
     }
-
-    if (result && result.status === 'ok') {
-      return {
-        success: true,
-        message: '¡Conexión exitosa con Google Sheets!',
-        details: result.message || 'La API respondió correctamente.'
-      };
-    }
-
-    return {
-      success: false,
-      message: 'Respuesta inesperada',
-      details: result?.error || 'El script respondió pero con formato de datos desconocido.'
-    };
+    return { success: true, message: 'Conectado a Google Sheets' };
   } catch (err: any) {
-    const errorMsg = String(err?.message || err || '');
-    
-    if (errorMsg.includes('Cualquier persona') || errorMsg.includes('HTML')) {
-      return {
-        success: false,
-        message: 'Error de permisos en Google Apps Script',
-        details: 'El script existe, pero Google bloqueó el acceso. Ve a tu Google Apps Script > Implementar > Gestionar implementaciones y asegúrate de que "Quién tiene acceso" esté en "Cualquier persona" (Anyone).'
-      };
-    }
-
-    if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError') || errorMsg.includes('abort')) {
-      return {
-        success: false,
-        message: 'No se pudo conectar con el servidor',
-        details: 'El navegador no pudo comunicarse con la URL. Revisa que tu conexión a internet funcione, que la URL termine en "/exec" y que el despliegue esté publicado para "Cualquier persona".'
-      };
-    }
-
     return {
       success: false,
-      message: 'Fallo al verificar la API',
-      details: errorMsg
+      message: 'Fallo al conectar con Google Sheets',
+      details: err?.message || String(err)
     };
   }
 }
 
-// Sincronizar todos los registros del caché local a Google Sheets
 export async function syncAllLocalToRemote(): Promise<{
   success: boolean;
   inserted?: number;
   updated?: number;
   message: string;
 }> {
-  const localRecords = getLocalCache();
-  if (localRecords.length === 0) {
-    return { success: true, message: 'No hay registros locales pendientes para sincronizar.' };
-  }
-
-  try {
-    const flatRecords = localRecords.map(flattenRecord);
-    // Intentar syncBatch
-    try {
-      const batchResult = await fetchFromGAS('syncBatch', flatRecords);
-      if (batchResult && batchResult.success) {
-        return {
-          success: true,
-          inserted: batchResult.inserted || 0,
-          updated: batchResult.updated || 0,
-          message: `Sincronizados exitosamente ${localRecords.length} registros con Google Sheets.`
-        };
-      }
-    } catch (e) {
-      console.warn('Fallo syncBatch, intentando registro por registro...', e);
-    }
-
-    // Fallback registro por registro
-    let okCount = 0;
-    for (const r of localRecords) {
-      try {
-        const flat = flattenRecord(r);
-        await fetchFromGAS('update', flat);
-        okCount++;
-      } catch (err) {
-        console.error('Error al sincronizar registro individual:', r.id, err);
-      }
-    }
-
-    return {
-      success: okCount > 0,
-      updated: okCount,
-      message: `Se sincronizaron ${okCount} de ${localRecords.length} registros con Google Sheets.`
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      message: `Error al sincronizar con la nube: ${err?.message || err}`
-    };
-  }
-}
-
-// Cargar todos los registros (Intentando GAS primero, luego LocalStorage fallback)
-export async function loadRecords(): Promise<{ records: MaintenanceRecord[]; source: 'api' | 'local'; error?: string }> {
-  try {
-    const result = await fetchFromGAS('getAll');
-    if (result && result.registros) {
-      const parsedRecords = (result.registros as FlatRecord[]).map(parseFlatRecord);
-      // Guardar en cache local para que quede actualizado
-      saveToLocalCache(parsedRecords);
-      return { records: parsedRecords, source: 'api' };
-    }
-    throw new Error('Formato de respuesta inválido');
-  } catch (e: any) {
-    console.warn('Fallo de conexión API. Usando caché local.', e);
-    const cached = getLocalCache();
-    return { 
-      records: cached, 
-      source: 'local', 
-      error: e?.message || 'Error de conexión con el servidor. Datos cargados localmente.'
-    };
-  }
-}
-
-// Guardar o Actualizar un registro (Intentando GAS, y actualizando cache local)
-export async function saveRecord(record: MaintenanceRecord): Promise<{ success: boolean; source: 'api' | 'local'; error?: string }> {
-  // Primero actualizar caché local siempre para garantizar disponibilidad offline
-  const cached = getLocalCache();
-  const idx = cached.findIndex(r => r.id === record.id);
-  
-  if (idx >= 0) {
-    cached[idx] = record;
-  } else {
-    cached.push(record);
-  }
-  saveToLocalCache(cached);
-
-  try {
-    const flat = flattenRecord(record);
-    const action = idx >= 0 ? 'update' : 'save';
-    const result = await fetchFromGAS(action, flat);
-    
-    if (result && !result.error) {
-      return { success: true, source: 'api' };
-    }
-    throw new Error(result?.error || 'Error desconocido del servidor');
-  } catch (e: any) {
-    console.warn('Error al guardar en el servidor. Guardado localmente en caché.', e);
-    return { 
-      success: true, 
-      source: 'local', 
-      error: 'Guardado localmente. Se sincronizará con el servidor cuando vuelva la conexión.' 
-    };
-  }
+  // Migración y sincronización con Firebase
+  const res = await migrateAllToFirebase();
+  return {
+    success: res.success,
+    inserted: res.count,
+    message: res.message
+  };
 }

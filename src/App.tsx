@@ -29,11 +29,14 @@ import {
   FileCheck2,
   Trash2,
   Cpu,
-  Layers
+  Layers,
+  ShieldCheck,
+  HardDrive
 } from 'lucide-react';
 
 import { MaintenanceRecord, RecordEstado } from './types';
-import { loadRecords, saveRecord, flattenRecord } from './lib/api';
+import { loadRecords, saveRecord, deleteRecord, backupDatabaseToFirestore, exportDatabaseToJSON } from './lib/api';
+import { testConnection as testFirebaseConnection, subscribeToMaintenanceRecords } from './lib/firebase';
 import { generarPDF, formatFecha, formatPesos, generarPDFResumenFueraDeServicio } from './lib/pdf';
 import SignatureCanvas from './components/SignatureCanvas';
 import ParqueStats from './components/ParqueStats';
@@ -127,15 +130,69 @@ export default function App() {
   const [iChecksBilletes, setIChecksBilletes] = useState<Record<string, string>>({});
   const [iChecksExtras, setIChecksExtras] = useState<Record<string, string>>({});
 
-  // Carga inicial
+  // Carga inicial y sincronización en tiempo real con Firebase Firestore
   useEffect(() => {
+    // 1. Probar conectividad según directiva del skill con breve espera para establecimiento del socket
+    const testTimer = setTimeout(() => {
+      testFirebaseConnection().catch(() => {});
+    }, 1200);
+
+    // 2. Cargar registros iniciales
     fetchData();
-    // Reloj dinámico
-    const timer = setInterval(() => {
-      // Forzar render del reloj si se requiriera, pero lo manejamos nativamente o en UI
-    }, 60000);
-    return () => clearInterval(timer);
+
+    // 3. Suscripción reactiva en tiempo real (multi-dispositivo)
+    const unsubscribe = subscribeToMaintenanceRecords(
+      (newRecords) => {
+        if (newRecords && newRecords.length > 0) {
+          const uniqueMap = new Map<string, MaintenanceRecord>();
+          newRecords.forEach((r, idx) => {
+            if (r) {
+              const recordId = r.id || `REG-${Date.now()}-${idx}`;
+              uniqueMap.set(recordId, { ...r, id: recordId });
+            }
+          });
+          setRecords(Array.from(uniqueMap.values()));
+          setConnectionStatus({ source: 'api' });
+        }
+      },
+      (err) => {
+        console.warn('Realtime fallback a local cache:', err);
+      }
+    );
+
+    return () => {
+      clearTimeout(testTimer);
+      unsubscribe();
+    };
   }, []);
+
+  // Eliminar registro
+  const handleDeleteRecord = async (recordId: string) => {
+    if (!window.confirm('¿Está seguro de eliminar este registro de mantenimiento?')) {
+      return;
+    }
+    setLoading(true);
+    const res = await deleteRecord(recordId);
+    setLoading(false);
+    if (res.success) {
+      addAlert('Registro eliminado correctamente.', 'info');
+      setRecords(prev => prev.filter(r => r.id !== recordId));
+    } else {
+      addAlert(`Error al eliminar: ${res.error}`, 'danger');
+    }
+  };
+
+  // Respaldo rápido
+  const handleQuickBackup = async () => {
+    setLoading(true);
+    const res = await backupDatabaseToFirestore(`Respaldo rápido - ${new Date().toLocaleTimeString('es-AR')}`);
+    setLoading(false);
+    if (res.success) {
+      addAlert(res.message, 'success');
+    } else {
+      addAlert(res.message, 'danger');
+    }
+  };
 
   const addAlert = (message: string, type: 'success' | 'info' | 'danger' = 'success') => {
     const id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -257,17 +314,21 @@ export default function App() {
 
   // --- SUBMITS DE ETAPAS ---
 
-  // Etapa 1: Enviar Egreso
+  // Etapa 1: Enviar Egreso (Flexible: guarda con los datos disponibles)
   const handleGuardarEgreso = async (e: FormEvent) => {
     e.preventDefault();
-    if (!eMaquina || !eIsla || !eFecha || !eMotivo || !eOperador) {
-      addAlert('Por favor complete los campos obligatorios.', 'danger');
-      return;
-    }
 
     setLoading(true);
     const targetId = editingId || 'REG-' + Date.now();
     const isNew = !editingId;
+
+    // Obtener valores seguros con respaldo si faltan datos
+    const safeMaquina = eMaquina.trim() || (eIsla.trim() ? `Isla-${eIsla.trim()}` : `M-${Date.now().toString().slice(-4)}`);
+    const catalogMatch = getMachineDetails(safeMaquina);
+    const safeIsla = eIsla.trim() || (catalogMatch ? catalogMatch.isla : 'S/D');
+    const safeFecha = eFecha || new Date().toISOString();
+    const safeMotivo = eMotivo.trim() || 'Revisión técnica / Sin especificar';
+    const safeOperador = eOperador.trim() || 'Operador de Turno';
 
     const updatedRecord: MaintenanceRecord = {
       id: targetId,
@@ -275,22 +336,22 @@ export default function App() {
       created_at: isNew ? new Date().toISOString() : (records.find(r => r.id === targetId)?.created_at || new Date().toISOString()),
       updated_at: new Date().toISOString(),
       egreso: {
-        maquina: eMaquina,
-        isla: eIsla,
-        fecha: eFecha,
-        motivo: eMotivo,
-        nota: eNota,
-        coinin: eCoinIn,
-        coinout: eCoinOut,
-        jackpot: eJackpot,
-        prog1: eProg1,
-        prog2: eProg2,
-        prog3: eProg3,
-        prog4: eProg4,
-        devolucion: eDevolucion,
-        operador: eOperador,
-        firma: eFirma,
-        foto: eFoto,
+        maquina: safeMaquina,
+        isla: safeIsla,
+        fecha: safeFecha,
+        motivo: safeMotivo,
+        nota: eNota || '',
+        coinin: eCoinIn || '',
+        coinout: eCoinOut || '',
+        jackpot: eJackpot || '',
+        prog1: eProg1 || '',
+        prog2: eProg2 || '',
+        prog3: eProg3 || '',
+        prog4: eProg4 || '',
+        devolucion: eDevolucion || '',
+        operador: safeOperador,
+        firma: eFirma || '',
+        foto: eFoto || '',
       },
       tecnico: isNew ? null : (records.find(r => r.id === targetId)?.tecnico || null),
       inspector: isNew ? null : (records.find(r => r.id === targetId)?.inspector || null)
@@ -302,7 +363,7 @@ export default function App() {
     if (res.success) {
       addAlert(
         isNew 
-          ? `✓ Egreso registrado. Correo de aviso enviado a técnicos y juego.`
+          ? `✓ Egreso registrado (${safeMaquina} - Isla ${safeIsla}). Correo enviado a técnicos y juego.`
           : '✓ Cambios de egreso actualizados correctamente.', 
         'success'
       );
@@ -316,32 +377,34 @@ export default function App() {
 
       resetEgresoForm();
       setActiveTab('lista');
+    } else {
+      addAlert('Error al guardar el egreso: ' + (res.error || 'Error desconocido'), 'danger');
     }
   };
 
-  // Etapa 2: Registrar Reparación Técnica
+  // Etapa 2: Registrar Reparación Técnica (Flexible: no se detiene si faltan datos)
   const handleGuardarTecnico = async (e: FormEvent) => {
     e.preventDefault();
     if (!selectedRecordForTecnico) {
       addAlert('Debe seleccionar una máquina egresada primero.', 'danger');
       return;
     }
-    if (!tFecha || !tSolucion || !tTecnico) {
-      addAlert('Complete todos los campos obligatorios de reparación.', 'danger');
-      return;
-    }
 
     setLoading(true);
+    const safeFecha = tFecha || new Date().toISOString();
+    const safeSolucion = tSolucion.trim() || 'Intervención técnica general / En revisión';
+    const safeTecnico = tTecnico.trim() || 'Técnico de Turno';
+
     const recordToUpdate: MaintenanceRecord = {
       ...selectedRecordForTecnico,
       estado: 'tecnico',
       updated_at: new Date().toISOString(),
       tecnico: {
-        fecha: tFecha,
-        informe: tInforme,
-        solucion: tSolucion,
-        tecnico: tTecnico,
-        firma: tFirma,
+        fecha: safeFecha,
+        informe: tInforme || '',
+        solucion: safeSolucion,
+        tecnico: safeTecnico,
+        firma: tFirma || '',
       }
     };
 
@@ -349,45 +412,45 @@ export default function App() {
     setLoading(false);
 
     if (res.success) {
-      addAlert(`✓ Reparación registrada. Correo de aviso enviado solo a juego.`, 'success');
+      addAlert(`✓ Reparación registrada. Máquina lista para control e inspección. Correo enviado a juego.`, 'success');
       setRecords(prev => prev.map(r => r.id === recordToUpdate.id ? recordToUpdate : r));
       setSelectedRecordForTecnico(null);
       setSearchTecnicoMaq('');
       setActiveTab('lista');
+    } else {
+      addAlert('Error al guardar la reparación: ' + (res.error || 'Error desconocido'), 'danger');
     }
   };
 
-  // Etapa 3: Registrar Inspección y Reingreso
+  // Etapa 3: Registrar Inspección y Reingreso (Flexible: completa el ciclo siempre)
   const handleGuardarInspector = async (e: FormEvent) => {
     e.preventDefault();
     if (!selectedRecordForInspector) {
       addAlert('Debe seleccionar una máquina reparada primero.', 'danger');
       return;
     }
-    if (!iFecha || !iInspector) {
-      addAlert('Complete la fecha y nombre del inspector para continuar.', 'danger');
-      return;
-    }
 
-    // Verificar si hay algún fallo o falta firmar
     setLoading(true);
+    const safeFecha = iFecha || new Date().toISOString();
+    const safeInspector = iInspector.trim() || 'Inspector de Turno';
+
     const recordToUpdate: MaintenanceRecord = {
       ...selectedRecordForInspector,
       estado: 'completo',
       updated_at: new Date().toISOString(),
       inspector: {
-        fecha: iFecha,
+        fecha: safeFecha,
         informe: selectedRecordForInspector.tecnico?.informe || '',
-        coinin: iCoinIn,
-        devolucion: iDevolucion,
-        denominacion: iDenominacion,
-        apuestaMin: iApuestaMin,
-        apuestaMax: iApuestaMax,
-        mdc: iMdc,
-        inspector: iInspector,
-        firma: iFirma,
-        checksBilletes: iChecksBilletes,
-        checksExtras: iChecksExtras,
+        coinin: iCoinIn || '',
+        devolucion: iDevolucion || '',
+        denominacion: iDenominacion || '',
+        apuestaMin: iApuestaMin || '',
+        apuestaMax: iApuestaMax || '',
+        mdc: iMdc || '',
+        inspector: safeInspector,
+        firma: iFirma || '',
+        checksBilletes: iChecksBilletes || {},
+        checksExtras: iChecksExtras || {},
       }
     };
 
@@ -395,11 +458,13 @@ export default function App() {
     setLoading(false);
 
     if (res.success) {
-      addAlert(`✓ Inspección completada. Máquina reingresada en servicio. Correo de aviso enviado solo a juego.`, 'success');
+      addAlert(`✓ Inspección completada. Máquina reingresada en servicio (100% habilitada). Correo enviado a juego.`, 'success');
       setRecords(prev => prev.map(r => r.id === recordToUpdate.id ? recordToUpdate : r));
       setSelectedRecordForInspector(null);
       setSearchInspectorMaq('');
       setActiveTab('lista');
+    } else {
+      addAlert('Error al guardar el reingreso: ' + (res.error || 'Error desconocido'), 'danger');
     }
   };
 
@@ -630,20 +695,20 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Real-time Connection Indicator */}
+            {/* Real-time Firebase Connection Indicator */}
             <button
               onClick={() => setShowDbSettingsModal(true)}
               className={`px-3 py-1.5 rounded-full border text-[11px] font-mono flex items-center gap-1.5 transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-sm ${
                 connectionStatus.source === 'api' 
-                  ? 'bg-emerald-950/40 hover:bg-emerald-900/50 border-emerald-500/30 text-emerald-300' 
-                  : 'bg-amber-950/40 hover:bg-amber-900/50 border-amber-500/35 text-amber-300 ring-1 ring-amber-500/20'
+                  ? 'bg-emerald-950/50 hover:bg-emerald-900/60 border-emerald-500/40 text-emerald-300' 
+                  : 'bg-amber-950/50 hover:bg-amber-900/60 border-amber-500/40 text-amber-300 ring-1 ring-amber-500/20'
               }`}
-              title="Configuración de Base de Datos y Google Sheets (Clic para ver detalles y solucionar)"
+              title="Base de Datos Firebase Firestore (Clic para gestionar o respaldar)"
             >
               {connectionStatus.source === 'api' ? (
                 <>
-                  <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>En Línea (Cloud Sync)</span>
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Firebase En Línea</span>
                 </>
               ) : (
                 <>
@@ -654,9 +719,18 @@ export default function App() {
             </button>
 
             <button
+              onClick={handleQuickBackup}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1a1a2e] hover:bg-[#25253e] border border-[#c8a84b]/30 text-xs font-semibold text-[#f0d882] transition-all"
+              title="Crear un punto de respaldo de los registros actuales en Firebase"
+            >
+              <HardDrive className="w-3.5 h-3.5 text-[#f0d882]" />
+              <span>Respaldo</span>
+            </button>
+
+            <button
               onClick={() => setShowDbSettingsModal(true)}
               className="p-2 rounded-lg bg-[#1a1a2e] hover:bg-[#25253e] border border-[#c8a84b]/25 transition-all text-[#f0d882]"
-              title="Configuración de Base de Datos / Google Sheets"
+              title="Panel de Base de Datos y Respaldos"
             >
               <Database className="w-4 h-4" />
             </button>
@@ -980,6 +1054,13 @@ export default function App() {
                             Acta PDF
                           </button>
                         )}
+                        <button
+                          onClick={() => handleDeleteRecord(r.id)}
+                          className="p-1.5 rounded-lg text-[#9090a8] hover:text-rose-400 hover:bg-rose-950/30 transition-colors"
+                          title="Eliminar registro"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   ))
@@ -1006,6 +1087,9 @@ export default function App() {
                   <p className="text-xs text-[#9090a8] mt-0.5">
                     Declarar máquina fuera de servicio y enviar notificaciones a técnicos.
                   </p>
+                  <p className="text-[11px] text-[#c8a84b]/80 mt-1 font-medium">
+                    ⓘ Formulario flexible: puede guardar con los datos que disponga; los datos faltantes se completarán con valores por defecto.
+                  </p>
                 </div>
               </div>
 
@@ -1018,11 +1102,10 @@ export default function App() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                        N° Máquina *
+                        N° Máquina
                       </label>
                       <input
                         type="text"
-                        required
                         placeholder="Ej: 0042"
                         value={eMaquina}
                         onChange={e => {
@@ -1039,11 +1122,10 @@ export default function App() {
                     
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                        N° Isla *
+                        N° Isla
                       </label>
                       <input
                         type="text"
-                        required
                         placeholder="Ej: 07"
                         value={eIsla}
                         onChange={e => setEIsla(e.target.value)}
@@ -1053,11 +1135,10 @@ export default function App() {
 
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                        Fecha y Hora *
+                        Fecha y Hora
                       </label>
                       <input
                         type="datetime-local"
-                        required
                         value={eFecha}
                         onChange={e => setEFecha(e.target.value)}
                         className="bg-[#171726] border border-white/10 rounded-lg px-3 py-2 text-xs focus:border-[#c8a84b] focus:outline-none text-[#e8e8f0]"
@@ -1103,15 +1184,14 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                        Seleccionar causa principal *
+                        Causa o Motivo Principal
                       </label>
                       <select
-                        required
                         value={eMotivo}
                         onChange={e => setEMotivo(e.target.value)}
                         className="bg-[#171726] border border-white/10 rounded-lg px-3 py-2.5 text-xs focus:border-[#c8a84b] focus:outline-none text-[#e8e8f0]"
                       >
-                        <option value="">— Seleccionar causa —</option>
+                        <option value="">— Seleccionar causa (o por defecto) —</option>
                         {MOTIVOS.map(m => (
                           <option key={m} value={m}>{m}</option>
                         ))}
@@ -1287,12 +1367,11 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                        Nombre del Operador *
+                        Nombre del Operador (Opcional)
                       </label>
                       <input
                         type="text"
-                        required
-                        placeholder="Ej: Carlos G."
+                        placeholder="Ej: Carlos G. (o por defecto Operador de Turno)"
                         value={eOperador}
                         onChange={e => setEOperador(e.target.value)}
                         className="bg-[#171726] border border-white/10 rounded-lg px-3 py-2.5 text-xs focus:border-[#c8a84b] focus:outline-none text-[#e8e8f0]"
@@ -1301,7 +1380,7 @@ export default function App() {
 
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                        Firma Digital *
+                        Firma Digital (Opcional)
                       </label>
                       <SignatureCanvas 
                         onSave={setEFirma} 
@@ -1348,6 +1427,9 @@ export default function App() {
                   </h2>
                   <p className="text-xs text-[#9090a8] mt-0.5">
                     Busque la máquina egresada para registrar la solución correctiva aplicada.
+                  </p>
+                  <p className="text-[11px] text-[#c8a84b]/80 mt-1 font-medium">
+                    ⓘ Formulario flexible: los campos omitidos se completarán automáticamente con valores por defecto para no frenar la auditoría.
                   </p>
                 </div>
               </div>
@@ -1437,11 +1519,10 @@ export default function App() {
 
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                        Fecha y Hora de Reparación *
+                        Fecha y Hora de Reparación
                       </label>
                       <input
                         type="datetime-local"
-                        required
                         value={tFecha}
                         onChange={e => setTFecha(e.target.value)}
                         className="bg-[#171726] border border-white/10 rounded-lg px-3 py-2 text-xs focus:border-[#c8a84b] focus:outline-none text-[#e8e8f0]"
@@ -1451,11 +1532,10 @@ export default function App() {
 
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                      Detalle de la Solución Aplicada *
+                      Detalle de la Solución Aplicada (Opcional)
                     </label>
                     <textarea
-                      required
-                      placeholder="Describa de forma detallada la reparación realizada, reemplazo de partes, etc..."
+                      placeholder="Describa la reparación realizada, o deje en blanco para registrar 'Intervención técnica general'..."
                       rows={4}
                       value={tSolucion}
                       onChange={e => setTSolucion(e.target.value)}
@@ -1466,12 +1546,11 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-white/5 pt-4">
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                        Nombre del Técnico de Turno *
+                        Nombre del Técnico de Turno (Opcional)
                       </label>
                       <input
                         type="text"
-                        required
-                        placeholder="Ej: Marcelo S."
+                        placeholder="Ej: Marcelo S. (o por defecto Técnico de Turno)"
                         value={tTecnico}
                         onChange={e => setTTecnico(e.target.value)}
                         className="bg-[#171726] border border-white/10 rounded-lg px-3 py-2 text-xs focus:border-[#c8a84b] focus:outline-none text-[#e8e8f0]"
@@ -1480,7 +1559,7 @@ export default function App() {
 
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                        Firma del Técnico *
+                        Firma del Técnico (Opcional)
                       </label>
                       <SignatureCanvas 
                         onSave={setTFirma} 
@@ -1527,6 +1606,9 @@ export default function App() {
                   </h2>
                   <p className="text-xs text-[#9090a8] mt-0.5">
                     Inspección técnica exhaustiva y validación de parámetros de juego antes de la puesta en marcha.
+                  </p>
+                  <p className="text-[11px] text-[#c8a84b]/80 mt-1 font-medium">
+                    ⓘ Formulario flexible: los campos omitidos se completarán automáticamente con valores seguros para reingresar la máquina sin demoras.
                   </p>
                 </div>
               </div>
@@ -1604,11 +1686,10 @@ export default function App() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                        Fecha y Hora Control *
+                        Fecha y Hora Control
                       </label>
                       <input
                         type="datetime-local"
-                        required
                         value={iFecha}
                         onChange={e => setIFecha(e.target.value)}
                         className="bg-[#171726] border border-white/10 rounded-lg px-3 py-2 text-xs focus:border-[#c8a84b] focus:outline-none text-[#e8e8f0]"
@@ -1799,12 +1880,11 @@ export default function App() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="flex flex-col gap-1.5">
                         <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                          Nombre del Inspector *
+                          Nombre del Inspector (Opcional)
                         </label>
                         <input
                           type="text"
-                          required
-                          placeholder="Ej: Laura M."
+                          placeholder="Ej: Laura M. (o por defecto Inspector de Turno)"
                           value={iInspector}
                           onChange={e => setIInspector(e.target.value)}
                           className="bg-[#171726] border border-white/10 rounded-lg px-3 py-2.5 text-xs focus:border-[#c8a84b] focus:outline-none text-[#e8e8f0]"
@@ -1813,7 +1893,7 @@ export default function App() {
 
                       <div className="flex flex-col gap-1.5">
                         <label className="text-[10px] text-[#9090a8] font-semibold uppercase tracking-wide">
-                          Firma del Inspector *
+                          Firma del Inspector (Opcional)
                         </label>
                         <SignatureCanvas 
                           onSave={setIFirma} 
