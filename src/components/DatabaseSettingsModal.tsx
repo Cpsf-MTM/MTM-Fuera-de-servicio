@@ -32,9 +32,12 @@ import {
   setCustomApiUrl, 
   resetCustomApiUrl, 
   testApiConnection, 
+  testEmailWebhook,
+  sendTestEmailAlert,
   migrateAllToFirebase,
   backupDatabaseToFirestore,
   exportDatabaseToJSON,
+  cleanupDuplicateRecords,
   DEFAULT_API_URL 
 } from '../lib/api';
 import { 
@@ -79,6 +82,11 @@ export default function DatabaseSettingsModal({
   const [loadingBackups, setLoadingBackups] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [currentUser, setCurrentUser] = useState(auth.currentUser);
+  const [cleaningDuplicates, setCleaningDuplicates] = useState(false);
+  const [testingEmail, setTestingEmail] = useState(false);
+  const [testEmailResult, setTestEmailResult] = useState<{ success?: boolean; message?: string; details?: string } | null>(null);
+  const [sendingTestEmail, setSendingTestEmail] = useState(false);
+  const [testEmailRecipient, setTestEmailRecipient] = useState('');
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(u => setCurrentUser(u));
@@ -121,6 +129,27 @@ export default function DatabaseSettingsModal({
       addAlert(`Error en migración: ${err?.message || err}`, 'danger');
     } finally {
       setMigrating(false);
+    }
+  };
+
+  // Depurar y limpiar duplicados en Firebase
+  const handleCleanDuplicates = async () => {
+    if (!window.confirm('¿Desea depurar registros duplicados en Firebase Firestore? Se mantendrá el registro principal más actualizado y se eliminarán tickets duplicados creados por error.')) {
+      return;
+    }
+    setCleaningDuplicates(true);
+    try {
+      const res = await cleanupDuplicateRecords();
+      if (res.success) {
+        addAlert(res.message, res.removedCount > 0 ? 'success' : 'info');
+        await onRefreshData();
+      } else {
+        addAlert(res.message, 'danger');
+      }
+    } catch (err: any) {
+      addAlert(`Error al depurar duplicados: ${err?.message || err}`, 'danger');
+    } finally {
+      setCleaningDuplicates(false);
     }
   };
 
@@ -219,6 +248,51 @@ export default function DatabaseSettingsModal({
     }
   };
 
+  const handleTestEmailWebhook = async () => {
+    setTestingEmail(true);
+    setTestEmailResult(null);
+    try {
+      const res = await testEmailWebhook(urlInput);
+      setTestEmailResult(res);
+      if (res.success) {
+        addAlert(res.message, 'success');
+      } else {
+        addAlert(res.message, 'danger');
+      }
+    } catch (e: any) {
+      setTestEmailResult({ success: false, message: 'Error de red', details: e?.message || String(e) });
+    } finally {
+      setTestingEmail(false);
+    }
+  };
+
+  const handleSendTestEmail = async () => {
+    setSendingTestEmail(true);
+    try {
+      const res = await sendTestEmailAlert(testEmailRecipient.trim() || undefined, urlInput);
+      if (res.success) {
+        addAlert(res.message, 'success');
+      } else {
+        addAlert(res.message + (res.details ? `: ${res.details}` : ''), 'danger');
+      }
+    } catch (e: any) {
+      addAlert(`Error al enviar prueba: ${e?.message || e}`, 'danger');
+    } finally {
+      setSendingTestEmail(false);
+    }
+  };
+
+  const handleSaveEmailUrl = () => {
+    setCustomApiUrl(urlInput);
+    addAlert('URL del Webhook de Correo guardada exitosamente.', 'success');
+  };
+
+  const handleResetEmailUrl = () => {
+    resetCustomApiUrl();
+    setUrlInput(DEFAULT_API_URL);
+    addAlert('URL restablecida al valor por defecto.', 'info');
+  };
+
   const handleCopyCode = () => {
     navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
     setCopiedCode(true);
@@ -299,8 +373,8 @@ export default function DatabaseSettingsModal({
                 : 'border-transparent text-[#9090a8] hover:text-white'
             }`}
           >
-            <Layers className="w-4 h-4 text-blue-400" />
-            Google Sheets (Opcional)
+            <Mail className="w-4 h-4 text-blue-400" />
+            Notificaciones por Correo
           </button>
         </div>
 
@@ -387,6 +461,29 @@ export default function DatabaseSettingsModal({
                   >
                     <UploadCloud className={`w-4 h-4 ${migrating ? 'animate-bounce' : ''}`} />
                     {migrating ? 'Migrando datos...' : 'Migrar Ahora a Firebase'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Herramienta de Limpieza de Registros Duplicados */}
+              <div className="bg-[#171728] p-5 rounded-xl border border-rose-500/25 space-y-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <h4 className="font-bold text-white text-sm flex items-center gap-2">
+                      <Trash2 className="w-4 h-4 text-rose-400" />
+                      Depurar Duplicados en Firebase Firestore
+                    </h4>
+                    <p className="text-xs text-[#9090a8]">
+                      Elimina tickets duplicados de una misma máquina creados por doble clic o desincronizaciones anteriores, manteniendo siempre el más actualizado.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleCleanDuplicates}
+                    disabled={cleaningDuplicates}
+                    className="bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/35 font-bold px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 shrink-0 active:scale-95 disabled:opacity-50"
+                  >
+                    <Trash2 className={`w-4 h-4 ${cleaningDuplicates ? 'animate-spin' : ''}`} />
+                    {cleaningDuplicates ? 'Depurando...' : 'Limpiar Duplicados'}
                   </button>
                 </div>
               </div>
@@ -548,12 +645,113 @@ export default function DatabaseSettingsModal({
             </div>
           )}
 
-          {/* TAB 3: GOOGLE SHEETS (OPCIONAL) */}
+          {/* TAB 3: NOTIFICACIONES POR CORREO (OPCIÓN A) */}
           {activeTab === 'sheets' && (
-            <div className="space-y-4">
-              <div className="p-4 rounded-xl bg-blue-950/30 border border-blue-500/30 text-xs text-blue-200/90 leading-relaxed">
+            <div className="space-y-5">
+              <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/40 to-[#171728] border border-emerald-500/30 text-xs text-emerald-200/90 leading-relaxed space-y-2">
+                <div className="flex items-center gap-2 text-white font-bold">
+                  <span className="text-base">🚀</span>
+                  <span>Opción A Configurada: Webhook Mailer Puro (Sin Google Sheets)</span>
+                </div>
                 <p>
-                  <strong>Google Sheets como respaldo secundario:</strong> Puedes seguir utilizando o sincronizando con Google Sheets si lo deseas. Recuerda que con Firebase Firestore ya cuentas con persistencia total y copias de seguridad inmediatas sin depender de las autorizaciones de Apps Script.
+                  En esta modalidad, <strong>Firebase Firestore es la única base de datos oficial</strong>. El script de Google Apps Script se utiliza exclusivamente como despachador de correo: recibe la orden al registrar un egreso o reparación y envía la alerta oficial sin tocar ni crear filas en ninguna planilla.
+                </p>
+              </div>
+
+              {/* Configuración de URL del Webhook y Prueba */}
+              <div className="bg-[#171728] p-5 rounded-xl border border-[#c8a84b]/20 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-white text-sm flex items-center gap-2">
+                    <ExternalLink className="w-4 h-4 text-[#f0d882]" />
+                    URL del Webhook de Correo Oficial
+                  </h4>
+                  <span className="text-[10px] bg-emerald-500/15 text-emerald-300 px-2 py-0.5 rounded font-mono">
+                    Apps Script Webhook
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={urlInput}
+                    onChange={e => setUrlInput(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    className="w-full bg-[#0e0e1a] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:border-[#c8a84b] focus:outline-none"
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleSaveEmailUrl}
+                        className="bg-[#c8a84b] hover:bg-[#f0d882] text-black font-bold px-3 py-1.5 rounded-lg text-xs transition-all active:scale-95 shadow"
+                      >
+                        Guardar URL
+                      </button>
+                      <button
+                        onClick={handleResetEmailUrl}
+                        className="bg-white/5 hover:bg-white/10 text-[#9090a8] hover:text-white border border-white/10 px-3 py-1.5 rounded-lg text-xs transition-all"
+                      >
+                        Restablecer
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={handleTestEmailWebhook}
+                      disabled={testingEmail}
+                      className="bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 font-semibold px-3 py-1.5 rounded-lg text-xs transition-all flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${testingEmail ? 'animate-spin' : ''}`} />
+                      {testingEmail ? 'Verificando...' : 'Verificar Conexión'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Resultado de verificación de webhook */}
+                {testEmailResult && (
+                  <div className={`p-3 rounded-lg border text-xs space-y-1 ${
+                    testEmailResult.success 
+                      ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300' 
+                      : 'bg-rose-950/40 border-rose-500/30 text-rose-300'
+                  }`}>
+                    <div className="flex items-center gap-1.5 font-bold">
+                      {testEmailResult.success ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <AlertCircle className="w-4 h-4 text-rose-400" />}
+                      <span>{testEmailResult.message}</span>
+                    </div>
+                    {testEmailResult.details && (
+                      <p className="text-[11px] opacity-90">{testEmailResult.details}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Herramienta: Enviar Correo de Prueba Inmediato */}
+              <div className="bg-[#171728] p-5 rounded-xl border border-sky-500/25 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-white text-sm flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-sky-400" />
+                    Enviar Notificación Oficial de Prueba
+                  </h4>
+                  <span className="text-[10px] text-[#9090a8]">Comprobar llegada a bandeja de entrada</span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                  <input
+                    type="email"
+                    placeholder="Casilla destino (opcional, ej: tu correo personal)"
+                    value={testEmailRecipient}
+                    onChange={e => setTestEmailRecipient(e.target.value)}
+                    className="flex-1 bg-[#0e0e1a] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:border-[#c8a84b] focus:outline-none"
+                  />
+                  <button
+                    onClick={handleSendTestEmail}
+                    disabled={sendingTestEmail}
+                    className="bg-sky-600 hover:bg-sky-500 text-white font-bold px-4 py-2 rounded-xl text-xs transition-all flex items-center justify-center gap-2 shrink-0 active:scale-95 shadow disabled:opacity-50"
+                  >
+                    <Mail className={`w-3.5 h-3.5 ${sendingTestEmail ? 'animate-bounce' : ''}`} />
+                    {sendingTestEmail ? 'Enviando...' : 'Enviar Correo de Prueba'}
+                  </button>
+                </div>
+                <p className="text-[11px] text-[#9090a8]">
+                  Si deja la casilla en blanco, enviará la prueba a: <code className="text-white/90">Tecnicos.SF@casinostafe.com.ar</code>.
                 </p>
               </div>
 
@@ -562,7 +760,7 @@ export default function DatabaseSettingsModal({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-white font-semibold">
                     <Mail className="w-4 h-4 text-[#f0d882]" />
-                    <span>Notificaciones Automáticas por Correo (Configuradas)</span>
+                    <span>Destinatarios Oficiales Configuradas en el Script</span>
                   </div>
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950/70 border border-emerald-500/30 text-emerald-300">
                     Activas
@@ -590,11 +788,25 @@ export default function DatabaseSettingsModal({
                 </div>
               </div>
 
+              {/* Pasos para Actualizar Google Apps Script */}
+              <div className="bg-[#171728] p-4 rounded-xl border border-white/10 space-y-2.5 text-xs text-[#a0a0b8]">
+                <h4 className="font-bold text-white text-xs uppercase tracking-wide flex items-center gap-2">
+                  <span>📋</span>
+                  Instrucciones de Actualización en Google Apps Script
+                </h4>
+                <ol className="list-decimal list-inside space-y-1.5 text-[11px] leading-relaxed">
+                  <li>Abre tu script en <a href="https://script.google.com" target="_blank" rel="noopener noreferrer" className="text-[#f0d882] underline font-bold">script.google.com</a>.</li>
+                  <li>Reemplaza todo el código del editor por el código que figura abajo (botón <em>Copiar Código</em>).</li>
+                  <li>Haz clic en <strong>Implementar &gt; Administrar implementaciones &gt; Editar (ícono lápiz) &gt; Nueva versión &gt; Implementar</strong>.</li>
+                  <li>Copia la URL del Webhook generada y pégala arriba si es diferente.</li>
+                </ol>
+              </div>
+
               {/* Código Apps Script */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-[#9090a8]">
-                    Código de soporte para Google Apps Script:
+                    Código Oficial del Webhook Mailer (Google Apps Script):
                   </span>
                   <button
                     onClick={handleCopyCode}

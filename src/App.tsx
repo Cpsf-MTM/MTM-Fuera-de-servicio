@@ -31,11 +31,12 @@ import {
   Cpu,
   Layers,
   ShieldCheck,
-  HardDrive
+  HardDrive,
+  Mail
 } from 'lucide-react';
 
 import { MaintenanceRecord, RecordEstado } from './types';
-import { loadRecords, saveRecord, deleteRecord, backupDatabaseToFirestore, exportDatabaseToJSON } from './lib/api';
+import { loadRecords, saveRecord, deleteRecord, backupDatabaseToFirestore, exportDatabaseToJSON, generateMailtoUrl } from './lib/api';
 import { testConnection as testFirebaseConnection, subscribeToMaintenanceRecords } from './lib/firebase';
 import { generarPDF, formatFecha, formatPesos, generarPDFResumenFueraDeServicio } from './lib/pdf';
 import SignatureCanvas from './components/SignatureCanvas';
@@ -314,9 +315,26 @@ export default function App() {
 
   // --- SUBMITS DE ETAPAS ---
 
-  // Etapa 1: Enviar Egreso (Flexible: guarda con los datos disponibles)
+  // Etapa 1: Enviar Egreso (Flexible: guarda con los datos disponibles, anti-duplicados)
   const handleGuardarEgreso = async (e: FormEvent) => {
     e.preventDefault();
+    if (loading) return; // Evitar envíos repetidos por doble clic
+
+    // Validación estricta anti-duplicados:
+    // Si no estamos editando un registro existente, verificar que la máquina no tenga ya un ticket activo
+    if (!editingId && eMaquina.trim()) {
+      const alreadyOut = records.find(r => 
+        r.egreso.maquina.trim().toLowerCase() === eMaquina.trim().toLowerCase() && 
+        (r.estado === 'egreso' || r.estado === 'tecnico')
+      );
+      if (alreadyOut) {
+        addAlert(
+          `⚠️ La máquina N° ${eMaquina} YA está registrada como fuera de servicio (Ticket ${alreadyOut.id}, Estado: ${alreadyOut.estado === 'egreso' ? 'Esperando Técnico' : 'En Reparación'}). No se creó un registro duplicado.`, 
+          'danger'
+        );
+        return;
+      }
+    }
 
     setLoading(true);
     const targetId = editingId || 'REG-' + Date.now();
@@ -368,12 +386,17 @@ export default function App() {
         'success'
       );
       
-      // Actualizar estado reactivo local
-      if (isNew) {
-        setRecords(prev => [updatedRecord, ...prev]);
-      } else {
-        setRecords(prev => prev.map(r => r.id === targetId ? updatedRecord : r));
-      }
+      // Actualizar estado reactivo local con deduplicación estricta
+      setRecords(prev => {
+        const uniqueMap = new Map<string, MaintenanceRecord>();
+        uniqueMap.set(updatedRecord.id, updatedRecord);
+        prev.forEach(r => {
+          if (!uniqueMap.has(r.id)) {
+            uniqueMap.set(r.id, r);
+          }
+        });
+        return Array.from(uniqueMap.values());
+      });
 
       resetEgresoForm();
       setActiveTab('lista');
@@ -385,6 +408,8 @@ export default function App() {
   // Etapa 2: Registrar Reparación Técnica (Flexible: no se detiene si faltan datos)
   const handleGuardarTecnico = async (e: FormEvent) => {
     e.preventDefault();
+    if (loading) return;
+
     if (!selectedRecordForTecnico) {
       addAlert('Debe seleccionar una máquina egresada primero.', 'danger');
       return;
@@ -413,7 +438,16 @@ export default function App() {
 
     if (res.success) {
       addAlert(`✓ Reparación registrada. Máquina lista para control e inspección. Correo enviado a juego.`, 'success');
-      setRecords(prev => prev.map(r => r.id === recordToUpdate.id ? recordToUpdate : r));
+      setRecords(prev => {
+        const uniqueMap = new Map<string, MaintenanceRecord>();
+        uniqueMap.set(recordToUpdate.id, recordToUpdate);
+        prev.forEach(r => {
+          if (!uniqueMap.has(r.id)) {
+            uniqueMap.set(r.id, r);
+          }
+        });
+        return Array.from(uniqueMap.values());
+      });
       setSelectedRecordForTecnico(null);
       setSearchTecnicoMaq('');
       setActiveTab('lista');
@@ -425,6 +459,8 @@ export default function App() {
   // Etapa 3: Registrar Inspección y Reingreso (Flexible: completa el ciclo siempre)
   const handleGuardarInspector = async (e: FormEvent) => {
     e.preventDefault();
+    if (loading) return;
+
     if (!selectedRecordForInspector) {
       addAlert('Debe seleccionar una máquina reparada primero.', 'danger');
       return;
@@ -459,7 +495,16 @@ export default function App() {
 
     if (res.success) {
       addAlert(`✓ Inspección completada. Máquina reingresada en servicio (100% habilitada). Correo enviado a juego.`, 'success');
-      setRecords(prev => prev.map(r => r.id === recordToUpdate.id ? recordToUpdate : r));
+      setRecords(prev => {
+        const uniqueMap = new Map<string, MaintenanceRecord>();
+        uniqueMap.set(recordToUpdate.id, recordToUpdate);
+        prev.forEach(r => {
+          if (!uniqueMap.has(r.id)) {
+            uniqueMap.set(r.id, r);
+          }
+        });
+        return Array.from(uniqueMap.values());
+      });
       setSelectedRecordForInspector(null);
       setSearchInspectorMaq('');
       setActiveTab('lista');
@@ -1019,6 +1064,16 @@ export default function App() {
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end pt-3 md:pt-0 border-t border-white/5 md:border-0">
+                        {/* Botón de Enlace Directo a Correo Oficial */}
+                        <a
+                          href={generateMailtoUrl(r)}
+                          className="text-xs bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/30 font-semibold py-1.5 px-3 rounded-lg flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+                          title="Abrir Outlook o cliente de correo con el aviso oficial redactado"
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                          <span>Correo</span>
+                        </a>
+
                         {r.estado === 'egreso' && (
                           <>
                             <button
@@ -1171,6 +1226,38 @@ export default function App() {
                             Isla {cat.isla}
                           </span>
                         </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Advertencia Antiduplicados en tiempo real */}
+                  {eMaquina.trim() && (() => {
+                    const alreadyOut = records.find(r => 
+                      r.egreso.maquina.trim().toLowerCase() === eMaquina.trim().toLowerCase() && 
+                      (r.estado === 'egreso' || r.estado === 'tecnico') &&
+                      r.id !== editingId
+                    );
+                    if (!alreadyOut) return null;
+                    return (
+                      <div className="mt-3 bg-amber-950/40 border border-amber-500/40 rounded-xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs animate-fadeIn shadow-lg">
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl shrink-0">⚠️</span>
+                          <div>
+                            <span className="text-amber-300 font-bold block text-xs">
+                              ¡Atención! La máquina N° {eMaquina} ya está registrada fuera de servicio
+                            </span>
+                            <span className="text-amber-200/80 text-[11px] block mt-0.5">
+                              Ticket: <strong className="font-mono">{alreadyOut.id}</strong> &bull; Estado: <strong className="uppercase">{alreadyOut.estado === 'egreso' ? 'Esperando Técnico' : 'En Reparación'}</strong> &bull; Isla {alreadyOut.egreso.isla}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => resetEgresoForm(alreadyOut)}
+                          className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-3 py-1.5 rounded-lg text-xs transition-all shrink-0 active:scale-95 shadow"
+                        >
+                          Ver ficha existente
+                        </button>
                       </div>
                     );
                   })()}
@@ -1401,9 +1488,17 @@ export default function App() {
                   </button>
                   <button
                     type="submit"
-                    className="bg-[#c8a84b] hover:bg-[#f0d882] text-black font-bold text-xs py-2.5 px-6 rounded-lg transition-all shadow-md active:scale-95"
+                    disabled={loading}
+                    className="bg-[#c8a84b] hover:bg-[#f0d882] text-black font-bold text-xs py-2.5 px-6 rounded-lg transition-all shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   >
-                    {editingId ? '💾 Guardar Cambios' : '📤 Registrar Egreso y Enviar Alerta'}
+                    {loading ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Guardando...</span>
+                      </>
+                    ) : (
+                      editingId ? '💾 Guardar Cambios' : '📤 Registrar Egreso y Enviar Alerta'
+                    )}
                   </button>
                 </div>
               </form>
@@ -1579,9 +1674,17 @@ export default function App() {
                     </button>
                     <button
                       type="submit"
-                      className="bg-[#c8a84b] hover:bg-[#f0d882] text-black font-bold text-xs py-2.5 px-6 rounded-lg transition-all shadow-md active:scale-95"
+                      disabled={loading}
+                      className="bg-[#c8a84b] hover:bg-[#f0d882] text-black font-bold text-xs py-2.5 px-6 rounded-lg transition-all shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
-                      🔔 Registrar Reparación y Enviar a Control
+                      {loading ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Guardando...</span>
+                        </>
+                      ) : (
+                        '🔔 Registrar Reparación y Enviar a Control'
+                      )}
                     </button>
                   </div>
                 </form>
@@ -1914,9 +2017,17 @@ export default function App() {
                     </button>
                     <button
                       type="submit"
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2.5 px-6 rounded-lg transition-all shadow-md active:scale-95"
+                      disabled={loading}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2.5 px-6 rounded-lg transition-all shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
-                      ✅ Validar y Reingresar al Servicio de Sala
+                      {loading ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Reingresando...</span>
+                        </>
+                      ) : (
+                        '✅ Validar y Reingresar al Servicio de Sala'
+                      )}
                     </button>
                   </div>
                 </form>

@@ -16,6 +16,82 @@ export const DEFAULT_API_URL = (import.meta as any).env?.VITE_API_URL || 'https:
 const LOCAL_STORAGE_KEY = 'mantenimiento_records_cache';
 const CUSTOM_API_URL_KEY = 'casino_custom_api_url';
 
+// Destinatarios Oficiales de Casino Santa Fe
+export const EMAILS_TECNICOS = 'Tecnicos.SF@casinostafe.com.ar';
+export const EMAILS_JUEGO = [
+  'vanina.anzotegui@casinostafe.com.ar',
+  'david.humoller@casinostafe.com.ar',
+  'pablo.gomez@casinostafe.com.ar',
+  'matias.girsa@casinostafe.com.ar',
+  'cristian.graglia@casinostafe.com.ar',
+  'crysthian.pons@casinostafe.com.ar',
+  'erica.vazquez@casinostafe.com.ar',
+  'luis.ortega@casinostafe.com.ar',
+  'alejandro.rey@casinostafe.com.ar',
+  'andrea.lana@casinostafe.com.ar',
+  'vanesa.lopez@casinostafe.com.ar'
+];
+
+// Generador de enlace directo mailto para abrir Outlook o cliente de correo predeterminado
+export function generateMailtoUrl(record: MaintenanceRecord, estado?: RecordEstado): string {
+  const currentEstado = estado || record.estado;
+  const isEgreso = currentEstado === 'egreso';
+  const recipients = isEgreso 
+    ? `${EMAILS_TECNICOS},${EMAILS_JUEGO.join(',')}` 
+    : EMAILS_JUEGO.join(',');
+
+  const subject = isEgreso 
+    ? `🚨 FUERA DE SERVICIO: Máquina ${record.egreso.maquina} (Isla ${record.egreso.isla})`
+    : currentEstado === 'tecnico'
+    ? `🔧 REPARACIÓN FINALIZADA: Máquina ${record.egreso.maquina} (Isla ${record.egreso.isla})`
+    : `✅ MÁQUINA EN SERVICIO: Máquina ${record.egreso.maquina} (Isla ${record.egreso.isla})`;
+
+  const lines = [
+    `CASINO SANTA FE — ACTA DE GESTIÓN DE MÁQUINAS`,
+    `========================================`,
+    `ESTADO: ${currentEstado === 'egreso' ? '🔴 FUERA DE SERVICIO' : currentEstado === 'tecnico' ? '🔧 EN REPARACIÓN / ESPERANDO INSPECCIÓN' : '✅ REINGRESADA EN SALA'}`,
+    `Ticket ID: ${record.id}`,
+    `N° Máquina: ${record.egreso.maquina}`,
+    `N° Isla: ${record.egreso.isla}`,
+    `Fecha Egreso: ${record.egreso.fecha || '-'}`,
+    `Motivo: ${record.egreso.motivo || '-'}`,
+    `Operador: ${record.egreso.operador || '-'}`,
+    ``,
+    `CONTADORES EGRESO:`,
+    `COIN IN: ${record.egreso.coinin || '-'} | COIN OUT: ${record.egreso.coinout || '-'}`,
+    `JACKPOT: ${record.egreso.jackpot || '-'} | % DEVOLUCIÓN: ${record.egreso.devolucion || '-'}`,
+  ];
+
+  if (record.tecnico) {
+    lines.push(
+      ``,
+      `DETALLE DE INTERVENCIÓN TÉCNICA:`,
+      `Técnico: ${record.tecnico.tecnico || '-'}`,
+      `Fecha: ${record.tecnico.fecha || '-'}`,
+      `Informe: ${record.tecnico.informe || '-'}`,
+      `Solución aplicada: ${record.tecnico.solucion || '-'}`
+    );
+  }
+
+  if (record.inspector) {
+    lines.push(
+      ``,
+      `CONTROL E INSPECCIÓN FINAL:`,
+      `Inspector: ${record.inspector.inspector || '-'}`,
+      `Fecha: ${record.inspector.fecha || '-'}`
+    );
+  }
+
+  lines.push(
+    ``,
+    `========================================`,
+    `Notificación generada por el Sistema de Mantenimiento Correctivo - Casino Santa Fe.`
+  );
+
+  const body = encodeURIComponent(lines.join('\n'));
+  return `mailto:${recipients}?subject=${encodeURIComponent(subject)}&body=${body}`;
+}
+
 export function getApiUrl(): string {
   try {
     const custom = localStorage.getItem(CUSTOM_API_URL_KEY);
@@ -238,14 +314,20 @@ export async function loadRecords(): Promise<{ records: MaintenanceRecord[]; sou
   }
 }
 
-// Disparar envío de correo en segundo plano a través del Web App de Apps Script (sin demoras ni bloqueo)
+// Disparar envío de correo en segundo plano a través del Webhook de Apps Script (sin demoras, sin planillas)
 export function triggerEmailAlertBackground(record: MaintenanceRecord, action: 'save' | 'update'): void {
   try {
     const targetUrl = getApiUrl();
     if (targetUrl && targetUrl.startsWith('https://script.google.com/')) {
       const flat = flattenRecord(record);
-      fetchFromGAS(action, flat).catch(err => {
-        console.warn('Aviso por correo en segundo plano (Apps Script):', err?.message || err);
+      // Enviar payload compatible con modo Mailer puro
+      fetchFromGAS('sendAlertEmail', {
+        action: 'sendAlertEmail',
+        estado: record.estado,
+        record: flat,
+        data: flat
+      }).catch(err => {
+        console.warn('Aviso por correo en segundo plano (Apps Script Mailer):', err?.message || err);
       });
     }
   } catch (err) {
@@ -253,7 +335,7 @@ export function triggerEmailAlertBackground(record: MaintenanceRecord, action: '
   }
 }
 
-// Guardar o Actualizar un registro en Firestore y en caché local
+// Guardar o Actualizar un registro en Firestore y en caché local (100% Firebase, sin tocar planillas)
 export async function saveRecord(record: MaintenanceRecord): Promise<{ success: boolean; source: 'api' | 'local'; error?: string }> {
   // 1. Guardar primero en caché local para respuesta inmediata
   const cached = getLocalCache();
@@ -265,10 +347,10 @@ export async function saveRecord(record: MaintenanceRecord): Promise<{ success: 
   }
   saveToLocalCache(cached);
 
-  // 2. Persistir en Firebase Firestore
+  // 2. Persistir en Firebase Firestore (Única Base de Datos Oficial)
   try {
     await saveMaintenanceRecordToFirestore(record);
-    // 3. Disparar notificación por correo a Técnicos y Juego en segundo plano
+    // 3. Disparar notificación por correo a Técnicos y Juego en segundo plano (Webhook sin tocar planillas)
     triggerEmailAlertBackground(record, idx >= 0 ? 'update' : 'save');
     return { success: true, source: 'api' };
   } catch (firestoreErr: any) {
@@ -277,6 +359,64 @@ export async function saveRecord(record: MaintenanceRecord): Promise<{ success: 
       success: true,
       source: 'local',
       error: 'Guardado en memoria local. Se sincronizará automáticamente al restablecer conexión.'
+    };
+  }
+}
+
+// Detectar y depurar registros duplicados (por ejemplo creados por doble clic o desincronización anterior)
+export async function cleanupDuplicateRecords(): Promise<{ success: boolean; removedCount: number; message: string }> {
+  try {
+    const records = await fetchMaintenanceRecordsFromFirestore();
+    if (!records || records.length === 0) {
+      return { success: true, removedCount: 0, message: 'No hay registros en Firebase Firestore.' };
+    }
+
+    // Mapa para detectar duplicados por clave (maquina + estado) o por ID repetido
+    const seenActiveMap = new Map<string, MaintenanceRecord>();
+    const idsToDelete: string[] = [];
+
+    // Ordenar de más reciente a más antiguo
+    const sorted = [...records].sort((a, b) => {
+      const tA = new Date(a.created_at || a.updated_at).getTime();
+      const tB = new Date(b.created_at || b.updated_at).getTime();
+      return tB - tA;
+    });
+
+    for (const r of sorted) {
+      // Para máquinas que están activamente fuera de servicio (egreso o técnico)
+      if (r.estado === 'egreso' || r.estado === 'tecnico') {
+        const key = `${r.egreso.maquina.trim().toLowerCase()}_${r.estado}`;
+        if (seenActiveMap.has(key)) {
+          // Ya existe un ticket más reciente o idéntico para esta máquina en este estado -> marcar para eliminar el sobrante
+          idsToDelete.push(r.id);
+        } else {
+          seenActiveMap.set(key, r);
+        }
+      }
+    }
+
+    if (idsToDelete.length === 0) {
+      return { success: true, removedCount: 0, message: 'No se detectaron registros duplicados en Firebase Firestore.' };
+    }
+
+    for (const id of idsToDelete) {
+      await deleteMaintenanceRecordFromFirestore(id);
+    }
+
+    // Actualizar caché local inmediatamente
+    const cleaned = records.filter(r => !idsToDelete.includes(r.id));
+    saveToLocalCache(cleaned);
+
+    return {
+      success: true,
+      removedCount: idsToDelete.length,
+      message: `¡Depuración exitosa! Se eliminaron ${idsToDelete.length} registros duplicados de Firebase Firestore.`
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      removedCount: 0,
+      message: `Error al depurar duplicados: ${err?.message || err}`
     };
   }
 }
@@ -361,6 +501,80 @@ export async function fetchFromGAS(action: string, data?: any, overrideUrl?: str
   return response.json();
 }
 
+// Probar el Webhook de Correo Oficial (Opción A)
+export async function testEmailWebhook(customUrl?: string): Promise<{ 
+  success: boolean; 
+  message: string; 
+  details?: string;
+}> {
+  const targetUrl = customUrl ? customUrl.trim() : getApiUrl();
+  if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
+    return {
+      success: false,
+      message: 'URL inválida',
+      details: 'La URL debe comenzar con "https://script.google.com/macros/s/..." y terminar en "/exec"'
+    };
+  }
+
+  try {
+    const result = await fetchFromGAS('test', {}, targetUrl);
+    if (result && result.success) {
+      return {
+        success: true,
+        message: '¡Webhook de Correo en línea!',
+        details: result.message || 'El servicio de Google Apps Script está activo y listo para despachar correos.'
+      };
+    }
+    return { success: true, message: 'Webhook alcanzado correctamente' };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: 'Fallo al contactar el Webhook de Correo',
+      details: err?.message || String(err)
+    };
+  }
+}
+
+// Disparar un correo de prueba real a una casilla designada
+export async function sendTestEmailAlert(recipient?: string, customUrl?: string): Promise<{
+  success: boolean;
+  message: string;
+  details?: string;
+}> {
+  const targetUrl = customUrl ? customUrl.trim() : getApiUrl();
+  if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
+    return {
+      success: false,
+      message: 'URL inválida',
+      details: 'La URL debe comenzar con "https://script.google.com/macros/s/..." y terminar en "/exec"'
+    };
+  }
+
+  try {
+    const res = await fetchFromGAS('sendTestEmail', {
+      recipient: recipient || EMAILS_TECNICOS
+    }, targetUrl);
+
+    if (res && res.success) {
+      return {
+        success: true,
+        message: res.message || '¡Correo de prueba enviado con éxito!',
+        details: 'El correo oficial de prueba fue despachado. Revise su bandeja de entrada.'
+      };
+    }
+    return {
+      success: true,
+      message: 'Petición enviada al Webhook de Correo.'
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: 'Error al enviar correo de prueba',
+      details: err?.message || String(err)
+    };
+  }
+}
+
 export async function testApiConnection(customUrl?: string): Promise<{ 
   success: boolean; 
   message: string; 
@@ -381,33 +595,7 @@ export async function testApiConnection(customUrl?: string): Promise<{
     // Continuar si prueba GAS
   }
 
-  const targetUrl = customUrl ? customUrl.trim() : getApiUrl();
-  if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
-    return {
-      success: false,
-      message: 'URL inválida',
-      details: 'La URL debe comenzar con "https://script.google.com/macros/s/..." y terminar en "/exec"'
-    };
-  }
-
-  try {
-    const result = await fetchFromGAS('getAll', null, targetUrl);
-    if (result && Array.isArray(result.registros)) {
-      return {
-        success: true,
-        message: 'Conexión exitosa con Google Sheets',
-        details: `Se encontraron ${result.registros.length} registros en la hoja de cálculo.`,
-        count: result.registros.length
-      };
-    }
-    return { success: true, message: 'Conectado a Google Sheets' };
-  } catch (err: any) {
-    return {
-      success: false,
-      message: 'Fallo al conectar con Google Sheets',
-      details: err?.message || String(err)
-    };
-  }
+  return testEmailWebhook(customUrl);
 }
 
 export async function syncAllLocalToRemote(): Promise<{
