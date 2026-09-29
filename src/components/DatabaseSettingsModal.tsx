@@ -789,16 +789,27 @@ export default function DatabaseSettingsModal({
               </div>
 
               {/* Pasos para Actualizar Google Apps Script */}
-              <div className="bg-[#171728] p-4 rounded-xl border border-white/10 space-y-2.5 text-xs text-[#a0a0b8]">
-                <h4 className="font-bold text-white text-xs uppercase tracking-wide flex items-center gap-2">
-                  <span>📋</span>
-                  Instrucciones de Actualización en Google Apps Script
+              <div className="bg-[#171728] p-4 rounded-xl border border-amber-500/20 space-y-3 text-xs text-[#a0a0b8]">
+                <h4 className="font-bold text-amber-300 text-xs uppercase tracking-wide flex items-center gap-2">
+                  <span>⚠️</span>
+                  Paso indispensable: Autorizar Permisos en Google Apps Script
                 </h4>
-                <ol className="list-decimal list-inside space-y-1.5 text-[11px] leading-relaxed">
-                  <li>Abre tu script en <a href="https://script.google.com" target="_blank" rel="noopener noreferrer" className="text-[#f0d882] underline font-bold">script.google.com</a>.</li>
-                  <li>Reemplaza todo el código del editor por el código que figura abajo (botón <em>Copiar Código</em>).</li>
-                  <li>Haz clic en <strong>Implementar &gt; Administrar implementaciones &gt; Editar (ícono lápiz) &gt; Nueva versión &gt; Implementar</strong>.</li>
-                  <li>Copia la URL del Webhook generada y pégala arriba si es diferente.</li>
+                <ol className="list-decimal list-inside space-y-2 text-[11px] leading-relaxed">
+                  <li>
+                    Abre tu script en <a href="https://script.google.com" target="_blank" rel="noopener noreferrer" className="text-[#f0d882] underline font-bold">script.google.com</a> y reemplaza todo el contenido por el código de abajo.
+                  </li>
+                  <li className="text-amber-200">
+                    <strong>Autorizar permisos de correo:</strong> En la barra superior de Apps Script, selecciona la función <code className="bg-black/40 px-1 py-0.5 rounded text-amber-300 font-mono">probarEnvioDirecto</code> y pulsa <strong>▷ Ejecutar</strong>. Google te pedirá <em>"Revisar permisos" &gt; Tu cuenta &gt; Configuración avanzada &gt; Ir a Casino Santa Fe (no seguro) &gt; Permitir</em>. ¡Esto desbloquea el envío de correos!
+                  </li>
+                  <li>
+                    Haz clic en <strong>Implementar &gt; Administrar implementaciones &gt; Editar (ícono lápiz)</strong>.
+                  </li>
+                  <li className="text-amber-200">
+                    Verifica que en <strong>"Quién tiene acceso"</strong> esté seleccionado <strong className="text-white">"Cualquier persona" (Anyone)</strong>, selecciona <strong>Versión: "Nueva versión"</strong> y pulsa <strong>Implementar</strong>.
+                  </li>
+                  <li>
+                    Si la URL de la aplicación web cambió, cópiala y pégala en el campo <em>URL del Webhook</em> de arriba y pulsa <strong>Guardar URL</strong>.
+                  </li>
                 </ol>
               </div>
 

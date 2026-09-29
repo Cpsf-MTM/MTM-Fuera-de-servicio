@@ -491,14 +491,26 @@ export function exportDatabaseToJSON(): void {
 
 // Re-exportar funciones de soporte de Apps Script para diagnósticos si se desea
 export async function fetchFromGAS(action: string, data?: any, overrideUrl?: string): Promise<any> {
-  const targetUrl = overrideUrl || getApiUrl();
+  const targetUrl = (overrideUrl || getApiUrl()).trim();
   const response = await fetch(targetUrl, {
     method: 'POST',
     body: JSON.stringify({ action, data }),
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
   });
-  if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-  return response.json();
+  
+  const text = await response.text();
+  try {
+    const json = JSON.parse(text);
+    return json;
+  } catch {
+    if (text.includes('Google Drive') || text.includes('accounts.google.com') || text.includes('Sign in')) {
+      throw new Error('El script requiere autorización de tu cuenta de Google o la implementación no está configurada con acceso a "Cualquier persona".');
+    }
+    if (text.includes('ScriptError') || text.includes('Exception')) {
+      throw new Error(`Error devuelto por Apps Script: ${text.slice(0, 160)}`);
+    }
+    throw new Error(`Respuesta no válida del servidor (${response.status}): ${text.slice(0, 140)}`);
+  }
 }
 
 // Probar el Webhook de Correo Oficial (Opción A)

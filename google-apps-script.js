@@ -7,8 +7,28 @@
 // ==========================================
 // CONFIGURACIÓN DE CORREOS OFICIALES
 // ==========================================
-const EMAILS_TECNICOS = "Tecnicos.SF@casinostafe.com.ar"; // Separa con comas si son varios
-const EMAILS_JUEGO = "vanina.anzotegui@casinostafe.com.ar,david.humoller@casinostafe.com.ar,pablo.gomez@casinostafe.com.ar,matias.girsa@casinostafe.com.ar,cristian.graglia@casinostafe.com.ar,crysthian.pons@casinostafe.com.ar,erica.vazquez@casinostafe.com.ar,luis.ortega@casinostafe.com.ar,alejandro.rey@casinostafe.com.ar,andrea.lana@casinostafe.com.ar,vanesa.lopez@casinostafe.com.ar";
+const EMAILS_TECNICOS = "Tecnicos.SF@casinostafe.com.ar"; // Lista o casilla de técnicos
+const EMAILS_JUEGO = "juego.cpsf@casinosantafe.com.ar"; // Lista de distribución oficial de Inspectores de Juego
+
+// ==========================================
+// FUNCIÓN PARA PROBAR DIRECTAMENTE DESDE EL EDITOR DE APPS SCRIPT
+// (Selecciona esta función en el menú desplegable arriba y haz clic en "▷ Ejecutar" para autorizar los permisos de correo de Google)
+// ==========================================
+function probarEnvioDirecto() {
+  const miCorreo = Session.getActiveUser().getEmail() || EMAILS_TECNICOS;
+  Logger.log("Enviando correo de prueba a: " + miCorreo);
+  MailApp.sendEmail({
+    to: miCorreo,
+    subject: "🧪 PRUEBA EXITOSA: Permisos de Correo Autorizados - Casino Santa Fe",
+    htmlBody: '<div style="font-family: Arial, sans-serif; max-width: 600px; padding: 20px; border: 2px solid #c8a84b; border-radius: 8px; font-size: 14px;">' +
+              '<h2 style="color: #2e7d32; margin-top: 0;">✓ ¡Permisos de correo autorizados con éxito!</h2>' +
+              '<p>Tu cuenta de Google ha concedido autorización para despachar las alertas de mantenimiento del Casino Santa Fe.</p>' +
+              '<p><strong>Hora:</strong> ' + new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" }) + ' hs</p>' +
+              '<p style="color: #666; font-size: 12px; margin-bottom: 0;">Servicio de Notificaciones · Casino Santa Fe</p>' +
+              '</div>'
+  });
+  Logger.log("✓ ¡Correo de prueba enviado con éxito a: " + miCorreo + "!");
+}
 
 // Responde a peticiones GET (para verificar conectividad directa desde la App)
 function doGet(e) {
