@@ -318,29 +318,76 @@ export async function loadRecords(): Promise<{ records: MaintenanceRecord[]; sou
 export function triggerEmailAlertBackground(record: MaintenanceRecord, action: 'save' | 'update'): void {
   try {
     const targetUrl = getApiUrl();
-    if (targetUrl && targetUrl.startsWith('https://script.google.com/')) {
-      const flat = flattenRecord(record);
-      // Enviar payload limpio, tanto plano como jerárquico, para compatibilidad total
-      const payload = {
-        action: 'sendAlertEmail',
-        estado: record.estado,
-        record: flat,
-        data: flat,
-        ...flat
-      };
-      
-      // Usar fetch con mode 'no-cors' para garantizar que el navegador nunca cancele la petición en segundo plano
-      fetch(targetUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify(payload)
-      }).catch(err => {
-        console.warn('Aviso por correo en segundo plano (Apps Script Mailer):', err?.message || err);
-      });
+    if (!targetUrl || !targetUrl.startsWith('https://script.google.com/')) {
+      return;
     }
+
+    const safeMaquina = record.egreso?.maquina || (record as any).e_maquina || (record as any).maquina || '';
+    const safeIsla = record.egreso?.isla || (record as any).e_isla || (record as any).isla || '';
+    const safeMotivo = record.egreso?.motivo || (record as any).e_motivo || (record as any).motivo || 'Revisión técnica';
+    const safeOperador = record.egreso?.operador || (record as any).e_operador || (record as any).operador || 'Operador de turno';
+    const safeFecha = record.egreso?.fecha || (record as any).e_fecha || new Date().toISOString();
+
+    const safeTecnico = record.tecnico?.tecnico || (record as any).t_tecnico || 'Técnico de Turno';
+    const safeSolucion = record.tecnico?.solucion || (record as any).t_solucion || 'Intervención técnica general';
+    const safeInformeTecnico = record.tecnico?.informe || (record as any).t_informe || '';
+
+    const safeInspector = record.inspector?.inspector || (record as any).i_inspector || 'Inspector Auditor';
+    const safeInformeInspector = record.inspector?.informe || (record as any).i_informe || 'Control Satisfactorio';
+
+    // Payload liviano (sin imágenes base64 pesadas que saturen o bloqueen Apps Script)
+    const cleanRecord = {
+      id: record.id,
+      estado: record.estado,
+      e_maquina: safeMaquina,
+      e_isla: safeIsla,
+      e_motivo: safeMotivo,
+      e_operador: safeOperador,
+      e_fecha: safeFecha,
+      t_tecnico: safeTecnico,
+      t_solucion: safeSolucion,
+      t_informe: safeInformeTecnico,
+      t_fecha: record.tecnico?.fecha || '',
+      i_inspector: safeInspector,
+      i_informe: safeInformeInspector,
+      i_fecha: record.inspector?.fecha || '',
+      maquina: safeMaquina,
+      isla: safeIsla,
+      motivo: safeMotivo,
+      operador: safeOperador,
+      fecha: safeFecha,
+      tecnico: safeTecnico,
+      solucion: safeSolucion,
+      informe: safeInformeTecnico,
+      inspector: safeInspector,
+      egreso: {
+        maquina: safeMaquina,
+        isla: safeIsla,
+        motivo: safeMotivo,
+        operador: safeOperador,
+        fecha: safeFecha
+      }
+    };
+
+    const payload = {
+      action: 'sendAlertEmail',
+      estado: record.estado,
+      record: cleanRecord,
+      data: cleanRecord,
+      ...cleanRecord
+    };
+    
+    // Usar fetch con mode 'no-cors' para garantizar que el navegador nunca cancele la petición en segundo plano
+    fetch(targetUrl, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
+      body: JSON.stringify(payload)
+    }).catch(err => {
+      console.warn('Aviso por correo en segundo plano (Apps Script Mailer):', err?.message || err);
+    });
   } catch (err) {
     console.warn('Error al iniciar aviso de correo:', err);
   }
