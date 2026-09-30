@@ -320,12 +320,23 @@ export function triggerEmailAlertBackground(record: MaintenanceRecord, action: '
     const targetUrl = getApiUrl();
     if (targetUrl && targetUrl.startsWith('https://script.google.com/')) {
       const flat = flattenRecord(record);
-      // Enviar payload compatible con modo Mailer puro
-      fetchFromGAS('sendAlertEmail', {
+      // Enviar payload limpio, tanto plano como jerárquico, para compatibilidad total
+      const payload = {
         action: 'sendAlertEmail',
         estado: record.estado,
         record: flat,
-        data: flat
+        data: flat,
+        ...flat
+      };
+      
+      // Usar fetch con mode 'no-cors' para garantizar que el navegador nunca cancele la petición en segundo plano
+      fetch(targetUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify(payload)
       }).catch(err => {
         console.warn('Aviso por correo en segundo plano (Apps Script Mailer):', err?.message || err);
       });

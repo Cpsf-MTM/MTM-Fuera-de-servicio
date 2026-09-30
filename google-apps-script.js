@@ -8,7 +8,7 @@
 // CONFIGURACIÓN DE CORREOS OFICIALES
 // ==========================================
 const EMAILS_TECNICOS = "Tecnicos.SF@casinostafe.com.ar"; // Lista o casilla de técnicos
-const EMAILS_JUEGO = "juego.cpsf@casinosantafe.com.ar"; // Lista de distribución oficial de Inspectores de Juego
+const EMAILS_JUEGO = "vanina.anzotegui@casinostafe.com.ar,david.humoller@casinostafe.com.ar,pablo.gomez@casinostafe.com.ar,matias.girsa@casinostafe.com.ar,cristian.graglia@casinostafe.com.ar,crysthian.pons@casinostafe.com.ar,erica.vazquez@casinostafe.com.ar,luis.ortega@casinostafe.com.ar,alejandro.rey@casinostafe.com.ar,andrea.lana@casinostafe.com.ar,vanesa.lopez@casinostafe.com.ar";
 
 // ==========================================
 // FUNCIÓN PARA PROBAR DIRECTAMENTE DESDE EL EDITOR DE APPS SCRIPT
@@ -47,14 +47,33 @@ function doGet(e) {
 // Responde a peticiones POST para enviar alertas inmediatas por correo
 function doPost(e) {
   try {
-    const requestData = JSON.parse(e.postData.contents);
-    const action = requestData.action;
-    const data = requestData.data || requestData.record || requestData;
-    const estado = requestData.estado || (action === "save" ? "egreso" : data.estado || "egreso");
+    let requestData = {};
+    if (e && e.postData && e.postData.contents) {
+      try {
+        requestData = JSON.parse(e.postData.contents);
+      } catch (parseErr) {
+        requestData = {};
+      }
+    }
+    
+    const action = requestData.action || "sendAlertEmail";
+    
+    // Extraer registro sin importar si viene plano o anidado en 'record' o 'data'
+    let dataRecord = requestData.record || requestData.data || requestData;
+    if (dataRecord && typeof dataRecord === "object") {
+      if (dataRecord.record && typeof dataRecord.record === "object") {
+        dataRecord = Object.assign({}, dataRecord, dataRecord.record);
+      }
+      if (dataRecord.data && typeof dataRecord.data === "object") {
+        dataRecord = Object.assign({}, dataRecord, dataRecord.data);
+      }
+    }
+    
+    const estado = requestData.estado || (dataRecord && dataRecord.estado) || (action === "save" ? "egreso" : "egreso");
     
     // Si la acción es enviar alerta por correo (o compatibilidad con save/update)
     if (action === "sendAlertEmail" || action === "save" || action === "update") {
-      enviarAlertaEmail(estado, data);
+      enviarAlertaEmail(estado, dataRecord);
       return ContentService.createTextOutput(JSON.stringify({
         success: true,
         emailSent: true,
@@ -72,7 +91,7 @@ function doPost(e) {
 
     // Envío de correo de prueba para verificar funcionamiento
     if (action === "sendTestEmail") {
-      const targetMail = (data && data.recipient) ? data.recipient : EMAILS_TECNICOS;
+      const targetMail = (dataRecord && dataRecord.recipient) ? dataRecord.recipient : EMAILS_TECNICOS;
       const horaStr = new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" });
       MailApp.sendEmail({
         to: targetMail,
@@ -90,7 +109,7 @@ function doPost(e) {
                 <span>El webhook de Apps Script está configurado correctamente en modo <strong>Mailer Exclusivo</strong> y despacha correos sin interactuar con planillas de Google Sheets.</span>
               </div>
               <p style="font-size: 12px; color: #666;">
-                Hora del servidor: \${horaStr} hs<br>
+                Hora del servidor: ${horaStr} hs<br>
                 Base de datos activa: Firebase Firestore
               </p>
             </div>
@@ -110,6 +129,7 @@ function doPost(e) {
     })).setMimeType(ContentService.MimeType.JSON);
       
   } catch (err) {
+    Logger.log("Error en doPost: " + err.toString());
     return ContentService.createTextOutput(JSON.stringify({ error: err.toString() }))
       .setMimeType(ContentService.MimeType.JSON);
   }
@@ -118,17 +138,31 @@ function doPost(e) {
 // ==========================================
 // FUNCIÓN AUXILIAR DE ENVÍO DE EMAIL HTML OFICIAL
 // ==========================================
-function enviarAlertaEmail(estado, record) {
+function enviarAlertaEmail(estado, rawRecord) {
+  const record = rawRecord || {};
   let destinatarios = "";
   let asunto = "";
   let htmlBody = "";
   
   const fechaFormateada = new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" });
   
+  const maquina = record.e_maquina || (record.egreso && record.egreso.maquina) || record.maquina || "-";
+  const isla = record.e_isla || (record.egreso && record.egreso.isla) || record.isla || "-";
+  const motivo = record.e_motivo || (record.egreso && record.egreso.motivo) || record.motivo || "Revisión técnica";
+  const operador = record.e_operador || (record.egreso && record.egreso.operador) || record.operador || "Operador de turno";
+  const fecha = record.e_fecha || (record.egreso && record.egreso.fecha) || record.fecha || fechaFormateada;
+  
+  const tecnico = record.t_tecnico || (record.tecnico && record.tecnico.tecnico) || record.tecnico || "Técnico de Turno";
+  const solucion = record.t_solucion || (record.tecnico && record.tecnico.solucion) || record.solucion || "Intervención técnica general";
+  const informeTecnico = record.t_informe || (record.tecnico && record.tecnico.informe) || "";
+  
+  const inspector = record.i_inspector || (record.inspector && record.inspector.inspector) || record.inspector || "Inspector Auditor";
+  const informeInspector = record.i_informe || (record.inspector && record.inspector.informe) || "Control Satisfactorio";
+  
   if (estado === "egreso") {
     // Etapa 1: Avisar a Técnicos y Juego
     destinatarios = EMAILS_TECNICOS + "," + EMAILS_JUEGO;
-    asunto = `🚨 FUERA DE SERVICIO: Máquina ${record.e_maquina} (Isla ${record.e_isla})`;
+    asunto = `🚨 FUERA DE SERVICIO: Máquina ${maquina} (Isla ${isla})`;
     
     htmlBody = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; border: 1px solid #ff4444; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
@@ -138,11 +172,11 @@ function enviarAlertaEmail(estado, record) {
         <div style="padding: 20px; background-color: #fafafa; color: #333;">
           <p>Se ha registrado un retiro de servicio para la siguiente máquina:</p>
           <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
-            <tr><td style="padding: 6px; font-weight: bold; width: 40%;">Máquina:</td><td style="padding: 6px;">${record.e_maquina}</td></tr>
-            <tr><td style="padding: 6px; font-weight: bold;">Isla:</td><td style="padding: 6px;">${record.e_isla}</td></tr>
-            <tr><td style="padding: 6px; font-weight: bold;">Fecha/Hora:</td><td style="padding: 6px;">${fechaFormateada} hs</td></tr>
-            <tr><td style="padding: 6px; font-weight: bold;">Motivo Falla:</td><td style="padding: 6px; color: #cc0000; font-weight: bold;">${record.e_motivo}</td></tr>
-            <tr><td style="padding: 6px; font-weight: bold;">Operador Inspector:</td><td style="padding: 6px;">${record.e_operador}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold; width: 40%;">Máquina:</td><td style="padding: 6px;">${maquina}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold;">Isla:</td><td style="padding: 6px;">${isla}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold;">Fecha/Hora:</td><td style="padding: 6px;">${fecha} hs</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold;">Motivo Falla:</td><td style="padding: 6px; color: #cc0000; font-weight: bold;">${motivo}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold;">Operador Inspector:</td><td style="padding: 6px;">${operador}</td></tr>
           </table>
           <p style="margin-top: 20px; font-size: 11px; color: #777; text-align: center;">
             Mantenimiento Casino Santa Fe · Este correo es automático.
@@ -153,7 +187,7 @@ function enviarAlertaEmail(estado, record) {
   } else if (estado === "tecnico") {
     // Etapa 2: Reparada. Avisar solo a Juego
     destinatarios = EMAILS_JUEGO;
-    asunto = `🔧 REPARADA (Pte Control): Máquina ${record.e_maquina} (Isla ${record.e_isla})`;
+    asunto = `🔧 REPARADA (Pte Control): Máquina ${maquina} (Isla ${isla})`;
     
     htmlBody = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; border: 1px solid #f0a500; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
@@ -163,11 +197,11 @@ function enviarAlertaEmail(estado, record) {
         <div style="padding: 20px; background-color: #fafafa; color: #333;">
           <p>La máquina ha sido reparada y queda a la espera del control de inspectores:</p>
           <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
-            <tr><td style="padding: 6px; font-weight: bold; width: 40%;">Máquina:</td><td style="padding: 6px;">${record.e_maquina}</td></tr>
-            <tr><td style="padding: 6px; font-weight: bold;">Isla:</td><td style="padding: 6px;">${record.e_isla}</td></tr>
-            <tr><td style="padding: 6px; font-weight: bold;">Técnico:</td><td style="padding: 6px;">${record.t_tecnico}</td></tr>
-            <tr><td style="padding: 6px; font-weight: bold;">Solución Aplicada:</td><td style="padding: 6px;">${record.t_solucion}</td></tr>
-            <tr><td style="padding: 6px; font-weight: bold;">Informe Técnico:</td><td style="padding: 6px; font-style: italic;">${record.t_informe || 'Sin comentarios'}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold; width: 40%;">Máquina:</td><td style="padding: 6px;">${maquina}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold;">Isla:</td><td style="padding: 6px;">${isla}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold;">Técnico:</td><td style="padding: 6px;">${tecnico}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold;">Solución Aplicada:</td><td style="padding: 6px;">${solucion}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold;">Informe Técnico:</td><td style="padding: 6px; font-style: italic;">${informeTecnico || 'Sin comentarios'}</td></tr>
           </table>
           <p style="margin-top: 20px; font-size: 11px; color: #777; text-align: center;">
             Mantenimiento Casino Santa Fe · Pendiente de auditoría del Inspector para reingreso.
@@ -178,7 +212,7 @@ function enviarAlertaEmail(estado, record) {
   } else if (estado === "completo") {
     // Etapa 3: Reingreso en Servicio. Avisar solo a Juego
     destinatarios = EMAILS_JUEGO;
-    asunto = `✅ REINGRESO EN SERVICIO: Máquina ${record.e_maquina} (Isla ${record.e_isla})`;
+    asunto = `✅ REINGRESO EN SERVICIO: Máquina ${maquina} (Isla ${isla})`;
     
     htmlBody = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; border: 1px solid #28a745; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
@@ -188,10 +222,10 @@ function enviarAlertaEmail(estado, record) {
         <div style="padding: 20px; background-color: #fafafa; color: #333;">
           <p>¡La máquina ha superado el control de auditoría satisfactoriamente y ya está operativa en sala!</p>
           <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
-            <tr><td style="padding: 6px; font-weight: bold; width: 40%;">Máquina:</td><td style="padding: 6px;">${record.e_maquina}</td></tr>
-            <tr><td style="padding: 6px; font-weight: bold;">Isla:</td><td style="padding: 6px;">${record.e_isla}</td></tr>
-            <tr><td style="padding: 6px; font-weight: bold;">Inspector Auditor:</td><td style="padding: 6px;">${record.i_inspector}</td></tr>
-            <tr><td style="padding: 6px; font-weight: bold;">Informe de Auditoría:</td><td style="padding: 6px; font-style: italic;">${record.i_informe || 'Control Exitoso'}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold; width: 40%;">Máquina:</td><td style="padding: 6px;">${maquina}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold;">Isla:</td><td style="padding: 6px;">${isla}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold;">Inspector Auditor:</td><td style="padding: 6px;">${inspector}</td></tr>
+            <tr><td style="padding: 6px; font-weight: bold;">Informe de Auditoría:</td><td style="padding: 6px; font-style: italic;">${informeInspector || 'Control Exitoso'}</td></tr>
           </table>
           <p style="margin-top: 20px; font-weight: bold; color: #28a745; text-align: center; font-size: 14px;">
             Habilitada al 100% para el público.
@@ -208,8 +242,9 @@ function enviarAlertaEmail(estado, record) {
         subject: asunto,
         htmlBody: htmlBody
       });
+      Logger.log("✓ Correo enviado con éxito a: " + destinatarios + " | Asunto: " + asunto);
     } catch (e) {
-      Logger.log("Error al enviar email: " + e.toString());
+      Logger.log("❌ Error al enviar email: " + e.toString());
     }
   }
 }
